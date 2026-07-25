@@ -71,13 +71,20 @@ function log(level, msg, extra) {
 }
 
 function getLocalIp() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+  try {
+    const interfaces = os.networkInterfaces();
+    if (!interfaces) return '127.0.0.1';
+    for (const name of Object.keys(interfaces)) {
+      const ifaces = interfaces[name];
+      if (!ifaces) continue;
+      for (const iface of ifaces) {
+        if (iface && iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
       }
     }
+  } catch (err) {
+    log('warn', 'getLocalIp 失敗, 降級使用 127.0.0.1', { err: err.message });
   }
   return '127.0.0.1';
 }
