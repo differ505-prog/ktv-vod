@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.6
+
+# =========================================================
+# KTV Pipeline - Python 影音下載 + Demucs 分離
+# 含 ffmpeg + Python 3.11 + yt-dlp + demucs + torch
+# 注意: 第一次 build 會下載 PyTorch + Demucs 模型 (約 2GB)
+# =========================================================
+
+FROM python:3.11-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 系統依賴: ffmpeg, build tools (demucs 需要編譯套件)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       ffmpeg \
+       git \
+       curl \
+       ca-certificates \
+       build-essential \
+       libsndfile1 \
+  && rm -rf /var/lib/apt/lists/*
+
+# 先裝 CPU 版 PyTorch (約 200MB, 適用大多數 NAS)
+# NAS 有 NVIDIA 顯卡再換成 --index-url https://download.pytorch.org/whl/cu121
+RUN pip install --no-cache-dir \
+      torch==2.3.1 \
+      --index-url https://download.pytorch.org/whl/cpu
+
+WORKDIR /app
+
+# 依賴先複製 (利用 docker layer cache)
+COPY ktv-pipeline/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 程式碼
+COPY ktv-pipeline/ ./ktv-pipeline/
+COPY pipeline_server.py ./pipeline_server.py
+
+# 共用資料目錄
+RUN mkdir -p /ktv-data/videos /ktv-data/processed /ktv-data/work
+ENV KTV_DATA_DIR=/ktv-data
+
+EXPOSE 5050
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:5050/health || exit 1
+
+CMD ["python", "pipeline_server.py"]

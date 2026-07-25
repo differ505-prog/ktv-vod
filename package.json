@@ -1,0 +1,23 @@
+{
+  "name": "ktv-vod-system",
+  "version": "1.0.0",
+  "description": "區域網路 KTV 點歌系統 (LAN KTV VOD System) - 大腦在後端，電視當傀儡",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "ktv",
+    "vod",
+    "socket.io",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.2",
+    "dotenv": "^16.4.5"
+  }
+}

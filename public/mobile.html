@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>🎤 KTV 點歌 - 手機遙控</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Socket.io Client (v4) -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <style>
+    html, body {
+      height: 100%;
+      background: #0a0a0f;
+      color: #fff;
+      font-family: 'PingFang TC', 'Microsoft JhengHei', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    body {
+      background:
+        radial-gradient(1200px 600px at 20% -10%, rgba(236, 72, 153, 0.25), transparent 60%),
+        radial-gradient(1000px 500px at 110% 10%, rgba(99, 102, 241, 0.18), transparent 60%),
+        #0a0a0f;
+    }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    .glass {
+      backdrop-filter: blur(20px);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .pink-btn {
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      box-shadow: 0 10px 30px -10px rgba(236, 72, 153, 0.6);
+    }
+    .pink-btn:active { transform: scale(0.96); }
+    .purple-btn {
+      background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+      box-shadow: 0 10px 30px -10px rgba(139, 92, 246, 0.6);
+    }
+    .purple-btn:active { transform: scale(0.96); }
+    .cyan-btn {
+      background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+      box-shadow: 0 10px 30px -10px rgba(6, 182, 212, 0.6);
+    }
+    .cyan-btn:active { transform: scale(0.96); }
+    .tab-active {
+      background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%);
+      box-shadow: 0 6px 20px -6px rgba(236, 72, 153, 0.7);
+    }
+    .song-card {
+      transition: all 0.2s ease;
+    }
+    .song-card:active {
+      transform: scale(0.98);
+    }
+    .now-playing-glow {
+      box-shadow: 0 0 24px rgba(236, 72, 153, 0.35);
+    }
+    @keyframes equalize {
+      0%, 100% { height: 30%; }
+      50% { height: 100%; }
+    }
+    .eq-bar {
+      animation: equalize 0.8s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="overflow-x-hidden">
+
+  <div class="min-h-screen max-w-md mx-auto pb-28">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-20 glass border-b border-white/10 px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🎤</span>
+        <div>
+          <h1 class="font-bold text-lg leading-tight">KTV 點歌</h1>
+          <p id="connLabel" class="text-[10px] text-gray-400 flex items-center gap-1">
+            <i class="fa-solid fa-circle text-green-500 text-[8px]"></i> 連線中
+          </p>
+        </div>
+      </div>
+      <div id="deviceBadge" class="text-[10px] px-2 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300">
+        <i class="fa-solid fa-mobile-screen"></i> Controller
+      </div>
+    </header>
+
+    <!-- 目前播放卡片 -->
+    <section class="px-4 mt-4">
+      <div id="nowPlayingCard" class="glass rounded-2xl p-4 now-playing-glow border border-pink-500/20">
+        <div class="flex items-start gap-3">
+          <div class="relative w-16 h-16 rounded-xl overflow-hidden bg-gradient-to-br from-pink-500 to-purple-600 flex-shrink-0">
+            <img id="npCover" class="w-full h-full object-cover opacity-0" alt="" />
+            <div class="absolute inset-0 flex items-center justify-center text-2xl">🎵</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-[10px] text-pink-400 font-bold tracking-widest mb-1 flex items-center gap-2">
+              <span class="flex gap-0.5 items-end h-3">
+                <span class="eq-bar w-0.5 bg-pink-400" style="animation-delay:0s"></span>
+                <span class="eq-bar w-0.5 bg-pink-400" style="animation-delay:0.2s"></span>
+                <span class="eq-bar w-0.5 bg-pink-400" style="animation-delay:0.4s"></span>
+              </span>
+              <span>NOW PLAYING</span>
+            </div>
+            <h2 id="npTitle" class="font-bold text-base truncate">等待點歌...</h2>
+            <p id="npArtist" class="text-xs text-gray-400 truncate">掃描電視 QR 或點下方歌曲加入點歌列隊</p>
+            <div class="flex items-center gap-3 mt-2 text-[11px]">
+              <span id="npMode" class="px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300">
+                <i class="fa-solid fa-microphone"></i> 原唱
+              </span>
+              <span id="npQueue" class="text-gray-400">
+                <i class="fa-solid fa-list-ol"></i> 佇列 0 首
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 控制面板 -->
+    <section class="px-4 mt-4">
+      <div class="grid grid-cols-2 gap-3">
+        <button id="btnSkip" class="pink-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
+          <i class="fa-solid fa-forward text-xl"></i>
+          <span class="text-sm font-bold">切歌</span>
+        </button>
+        <button id="btnVocal" class="purple-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
+          <i id="vocalIcon" class="fa-solid fa-microphone-lines text-xl"></i>
+          <span id="vocalLabel" class="text-sm font-bold">原唱 / 伴奏</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 分頁切換 -->
+    <section class="px-4 mt-6">
+      <div class="glass rounded-2xl p-1 flex gap-1">
+        <button data-tab="search" class="tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition tab-active">
+          <i class="fa-solid fa-magnifying-glass"></i> 點歌
+        </button>
+        <button data-tab="queue" class="tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition">
+          <i class="fa-solid fa-list-ol"></i> 待播佇列
+        </button>
+      </div>
+    </section>
+
+    <!-- 點歌列表 -->
+    <section id="tab-search" class="tab-panel px-4 mt-4">
+      <div class="relative mb-3">
+        <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+        <input id="searchInput" type="text" placeholder="搜尋歌名 / 歌手..."
+               class="w-full glass rounded-xl pl-9 pr-3 py-3 text-sm outline-none focus:border-pink-500/50" />
+      </div>
+      <div id="songList" class="space-y-2 pb-6"></div>
+    </section>
+
+    <!-- 待播佇列 -->
+    <section id="tab-queue" class="tab-panel px-4 mt-4 hidden">
+      <div id="queueList" class="space-y-2 pb-6"></div>
+      <div id="queueEmpty" class="hidden text-center py-16 text-gray-500">
+        <i class="fa-solid fa-music text-4xl mb-3 block"></i>
+        <p class="text-sm">佇列是空的</p>
+        <p class="text-xs mt-1">點幾首歌嗨一下 🎶</p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-24 left-1/2 -translate-x-1/2 glass px-4 py-2 rounded-xl text-sm hidden z-50">
+    <i class="fa-solid fa-circle-check text-green-400"></i>
+    <span id="toastText"></span>
+  </div>
+
+  <script src="./mobile.js"></script>
+</body>
+</html>

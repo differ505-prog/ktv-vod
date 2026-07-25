@@ -1,0 +1,29 @@
+# KTV Offline Pipeline — 依賴清單
+# Python 3.10+  required
+# 安裝方式：pip install -r requirements.txt
+
+# YouTube / 影片下載
+yt-dlp>=2024.0.0
+
+# AI 音源分離 (Meta Demucs)
+# 若無 GPU，會自動降級使用 CPU
+# 注意：torch 體積大，若僅在 CPU 環境可改用：
+#   pip install demucs --extra-index-url https://download.pytorch.org/whl/cpu
+demucs>=4.0.0
+torch>=2.0.0          # 搭配 demucs
+torchaudio>=2.0.0     # 搭配 demucs
+
+# FFmpeg Python 封裝 (非強制，直接呼叫 subprocess 也可)
+# ffmpeg-python>=0.2.0
+
+# 作業系統音訊解碼 (demucs 內部依賴)
+# macOS: brew install ffmpeg (已安裝)
+# Linux: apt install ffmpeg
+# Windows: 從 https://ffmpeg.org/download.html 下載並加入 PATH
+
+# HTTP 服務 (供 Node 中控呼叫)
+# Flask 2.x 就夠用, 不需要 FastAPI 重武
+flask>=3.0.0
+
+# 讀取 .env (選填)
+python-dotenv>=1.0.0

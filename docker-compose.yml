@@ -1,0 +1,92 @@
+# =========================================================
+# KTV VOD System - Docker Compose
+# 兩個服務: ktv-brain (Node) + ktv-pipeline (Python)
+# 兩個共用 volume: ktv-data (處理輸出) + processed-cache
+# =========================================================
+
+version: "3.9"
+
+services:
+  # ===========================================
+  # 1. KTV Brain - Node.js 中控 (Express + Socket.io)
+  # ===========================================
+  ktv-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    image: ktv-brain:latest
+    container_name: ktv-brain
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - CORS_ORIGIN=*
+      - VIDEO_DIR=/ktv-data/videos
+      - VIDEO_URL_PREFIX=/videos
+      - PIPELINE_API_URL=http://ktv-pipeline:5050
+      - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
+      - DEMUCS_MODEL=${DEMUCS_MODEL:-htdemucs}
+      - DEMUCS_FORCE_CPU=${DEMUCS_FORCE_CPU:-false}
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # 影片資料來源 (處理完成的 mp4)
+      - ktv-data:/ktv-data
+      # 即時熱更新 (開發模式可開, 正式建議移除)
+      # - ./public:/app/public:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ktv-net
+    depends_on:
+      ktv-pipeline:
+        condition: service_started
+
+  # ===========================================
+  # 2. KTV Pipeline - Python 影音處理
+  # ===========================================
+  ktv-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    image: ktv-pipeline:latest
+    container_name: ktv-pipeline
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
+      - KTV_DATA_DIR=/ktv-data
+      - PORT=5050
+    volumes:
+      - ktv-data:/ktv-data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ktv-net
+
+# =========================================================
+# Volumes (Docker 自動建立 named volume)
+# 想知道實際路徑:  docker volume inspect ktv_vod_ktv-data
+# =========================================================
+volumes:
+  ktv-data:
+    name: ktv-data
+
+# =========================================================
+# Networks
+# =========================================================
+networks:
+  ktv-net:
+    name: ktv-net
+    driver: bridge

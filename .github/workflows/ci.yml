@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    name: Lint + Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check (server.js)
+        run: node --check server.js
+
+      - name: Smoke test — 啟動 5 秒看 health endpoint
+        run: |
+          node server.js &
+          SERVER_PID=$!
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check failed: HTTP $STATUS"
+            exit 1
+          fi
+          echo "✅ Health check passed"
+          kill $SERVER_PID || true
+
+      - name: Validate docker-compose.yml
+        run: |
+          docker compose config -q
+
+      - name: (選填) Build Docker 映像
+        run: |
+          docker build -f Dockerfile.node -t ktv-brain:ci .
+        continue-on-error: false
+
+  pipeline-deps:
+    name: Validate Python deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python deps
+        working-directory: ktv-pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Import smoke test
+        working-directory: ktv-pipeline
+        run: |
+          python -c "import main; print('✅ main.py imports OK')"
