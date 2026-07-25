@@ -38,7 +38,7 @@ COPY ktv-pipeline/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 程式碼
-COPY ktv-pipeline/ ./ktv-pipeline/
+COPY ktv-pipeline/ ./ktv_pipeline/
 COPY pipeline_server.py ./pipeline_server.py
 
 # 共用資料目錄
