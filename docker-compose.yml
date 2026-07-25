@@ -23,7 +23,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - CORS_ORIGIN=*
-      - VIDEO_DIR=/ktv-data/videos
+      - VIDEO_DIR=/ktv-data/processed
       - VIDEO_URL_PREFIX=/videos
       - PIPELINE_API_URL=http://ktv-pipeline:5050
       - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
