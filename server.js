@@ -220,7 +220,10 @@ function scanLocalVideos() {
 }
 
 // ===== 內建歌曲黑名單 (持久化) =====
-const HIDDEN_BUILTIN_FILE = path.join(__dirname, 'data', 'built_in_hidden.json');
+// 路徑選擇:不能放 /app (root owned,container user node 無法寫)
+// /ktv-data 是 named volume (ktv user owned),且 ktv-brain container 對它有 rw 權限
+const HIDDEN_BUILTIN_FILE = process.env.BUILT_IN_HIDDEN_FILE
+  || path.join(process.env.VIDEO_DIR || '/ktv-data/processed', '..', 'data', 'built_in_hidden.json');
 let BUILT_IN_HIDDEN = new Set();
 function loadBuiltInHidden() {
   try {
@@ -242,6 +245,7 @@ function saveBuiltInHidden() {
   }
 }
 loadBuiltInHidden();
+log('info', 'BUILT_IN_HIDDEN 載入', { file: HIDDEN_BUILTIN_FILE, count: BUILT_IN_HIDDEN.size });
 
 function buildSongLibrary() {
   return [
