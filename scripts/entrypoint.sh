@@ -34,6 +34,13 @@ if [ -n "$VIDEO_DIR" ] && [ -d "$VIDEO_DIR" ]; then
   chown -R ktv:ktv "$VIDEO_DIR" 2>/dev/null || true
 fi
 
+# 2.5 確保 TV_CACHE_DIR 存在且 ktv 可寫
+TV_CACHE_DIR="/ktv-data/tv_cache"
+mkdir -p "$TV_CACHE_DIR" 2>/dev/null || true
+chown -R ktv:ktv "$TV_CACHE_DIR" 2>/dev/null || true
+touch /ktv-data/sync_config.json 2>/dev/null || true
+chown ktv:ktv /ktv-data/sync_config.json 2>/dev/null || true
+
 echo "[entrypoint] 切換到 ktv user 啟動: $*"
 # 3. 切換到 ktv user 執行 CMD
 exec gosu ktv "$@"

@@ -119,9 +119,17 @@ app.get('/tv-videos/:filename', async (req, res) => {
     return res.status(404).send('Not found');
   }
 
+  const sendVideo = (filePath) => {
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.sendFile(filePath);
+  };
+
   // offset 極小時直接回傳原檔
   if (Math.abs(TV_SYNC_OFFSET) < 0.01) {
-    return res.sendFile(origPath);
+    return sendVideo(origPath);
   }
 
   const shadowFilename = `${TV_SYNC_OFFSET.toFixed(2)}_${filename}`;
@@ -138,8 +146,6 @@ app.get('/tv-videos/:filename', async (req, res) => {
         }
       }
 
-      // 如果 offset > 0，代表聲音太慢，必須「畫面延遲」。所以視訊軌 +offset。
-      // 如果 offset < 0，代表聲音太快，必須「聲音延遲」。所以音訊軌 +|offset|。
       let cmd;
       if (TV_SYNC_OFFSET > 0) {
         cmd = `ffmpeg -y -itsoffset ${TV_SYNC_OFFSET} -i "${origPath}" -i "${origPath}" -map 0:v -map 1:a -c copy "${shadowPath}"`;
@@ -149,11 +155,11 @@ app.get('/tv-videos/:filename', async (req, res) => {
       await execPromise(cmd);
     } catch(err) {
       log('error', '產生 TV 陰影檔失敗', { err: err.message });
-      return res.sendFile(origPath); // 失敗就 fallback 給原檔
+      return sendVideo(origPath); // 失敗就 fallback 給原檔
     }
   }
 
-  res.sendFile(shadowPath);
+  sendVideo(shadowPath);
 });
 
 // ===== 工具 =====
