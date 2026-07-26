@@ -87,7 +87,8 @@ function initAudioGraph() {
       destinationGain = audioCtx.createGain();
       destinationGain.gain.value = 1.0;
 
-      // 接線：Splitter → (4 條 Gain) → Merger → destinationGain → output
+      // 接線：source → Splitter → (4 條 Gain) → Merger → destinationGain → output
+      sourceNode.connect(splitter);
       splitter.connect(leftGainOriginal);
       splitter.connect(rightGainOriginal);
       splitter.connect(leftGainVocalOff);

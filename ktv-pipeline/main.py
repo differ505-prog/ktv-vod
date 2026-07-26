@@ -137,6 +137,19 @@ def is_demucs_available() -> bool:
     return True
 
 
+# ============================================================
+# 2.5 音訊對齊 helpers (字幕偏移修正 7/26) — 抽到 alignment.py
+# ============================================================
+from alignment import (
+    get_wav_samples,
+    get_wav_duration_s,
+    leading_silence_seconds,
+    trim_wav_to_duration,
+    build_atrim_filter,
+    compute_audio_skip,
+)
+
+
 def check_ffmpeg() -> bool:
     """確認 ffmpeg 在 PATH 中。"""
     try:
@@ -187,83 +200,105 @@ def stage_download(
     temp_dir: Path,
 ) -> tuple[Path, Path]:
     """
-    階段 1：下載影片與音訊
+    階段 1：下載影片與音訊（A/V 同步保證版）
 
-    - 影片：bestvideo[ext=mp4] → video.mp4（無音軌，純視訊）
-    - 音訊：bestaudio → audio.wav（44.1kHz 立體聲，給 Demucs 用）
+    策略：下載「影音合一」的 MP4，再從同一檔案用 ffmpeg 抽出音訊。
+    這樣 video track 和 audio track 來自同一個 mux 好的容器，
+    PTS 天生對齊，不會有分開下載造成的 A/V 偏移。
+
+    - 合一影音：bestvideo+bestaudio → full.mp4
+    - 音訊：ffmpeg -i full.mp4 → audio.wav（44.1kHz 立體聲，給 Demucs 用）
 
     回傳：(video_path, audio_path)
     """
+    full_path = temp_dir / "full.mp4"
     video_path = temp_dir / "video.mp4"
     audio_path = temp_dir / "audio.wav"
 
-    logger.info("[下載] 階段 1/3：下載最高畫質無音軌影片 ...")
+    # ---- Step 1: 下載影音合一的 MP4 ----
+    logger.info("[下載] 階段 1/3：下載影音合一 MP4（確保 A/V 同步）...")
     try:
-        ydl_video_opts = {
-            # 優先 MP4，否則退回任意最佳 video format（會在後面用 ffmpeg 統一轉成 MP4）
-            "format": "bestvideo[ext=mp4][height<=1080]/bestvideo[ext=mp4]/bestvideo",
-            # outtmpl 含 %(ext)s 才能保留原始副檔名（否則只會叫 'video' 無副檔名）
-            "outtmpl": str(temp_dir / "video.%(ext)s"),
+        ydl_opts = {
+            # bestvideo+bestaudio: yt-dlp 會自動 mux 並對齊 PTS
+            "format": (
+                "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/"
+                "bestvideo[ext=mp4]+bestaudio/"
+                "best[ext=mp4]/"
+                "best"
+            ),
+            "outtmpl": str(temp_dir / "full.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "merge_output_format": "mp4",
         }
-        with yt_dlp.YoutubeDL(ydl_video_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except Exception as e:
         raise RuntimeError(f"[ERROR] 影片下載失敗：{e}") from e
 
-    # 列出實際下載到的影片檔（可能是 video.mp4、video.webm 等）
-    downloaded_video = next(temp_dir.glob("video.*"), None)
-    if not downloaded_video or not downloaded_video.exists() or downloaded_video.suffix == "":
+    # 找到實際下載的檔案
+    downloaded = next(temp_dir.glob("full.*"), None)
+    if not downloaded or not downloaded.exists() or downloaded.suffix == "":
         files = list(temp_dir.iterdir())
         logger.warning(f"[下載] temp 目錄內容：{[f.name for f in files]}")
         raise FileNotFoundError(
             f"[ERROR] 找不到下載的影片檔，請確認 yt-dlp 支援此 URL。目錄內容：{files}"
         )
-    # 統一規範成 video.mp4（後面 ffmpeg 接受 MP4 container）
-    if downloaded_video.name != "video.mp4":
-        renamed = temp_dir / "video.mp4"
-        if renamed.exists():
-            renamed.unlink()
-        downloaded_video.rename(renamed)
-        downloaded_video = renamed
+    # 統一規範成 full.mp4
+    if downloaded.name != "full.mp4":
+        if full_path.exists():
+            full_path.unlink()
+        downloaded.rename(full_path)
 
-    logger.info(f"[下載] 影片下載完成：{downloaded_video.stat().st_size / 1024 / 1024:.1f} MB")
+    logger.info(f"[下載] 影音合一下載完成：{full_path.stat().st_size / 1024 / 1024:.1f} MB")
 
-    # ---- 下載音訊為 WAV ----
-    logger.info("[下載] 階段 1/3：下載最佳音訊並轉為 WAV ...")
-    try:
-        ydl_audio_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": str(temp_dir / "audio"),
-            "quiet": True,
-            "no_warnings": True,
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "wav",
-                    "preferredquality": "0",  # 無損
-                }
-            ],
-        }
-        with yt_dlp.YoutubeDL(ydl_audio_opts) as ydl:
-            ydl.download([url])
-    except Exception as e:
-        raise RuntimeError(f"[ERROR] 音訊下載/轉檔失敗：{e}") from e
-
-    downloaded_audio = next(temp_dir.glob("audio.wav"), None)
-    if not downloaded_audio or not downloaded_audio.exists():
-        files = list(temp_dir.iterdir())
-        raise FileNotFoundError(
-            f"[ERROR] 找不到下載的音訊檔。目錄內容：{files}"
+    # ---- Step 2: 從同一檔案抽出純視訊（無音軌）----
+    # 後續 stage_mix_and_encode 會用這個 video-only mp4
+    logger.info("[下載] 從合一 MP4 抽出純視訊 ...")
+    cmd_video = [
+        "ffmpeg", "-y",
+        "-i", str(full_path),
+        "-map", "0:v:0",
+        "-c:v", "copy",
+        "-an",  # 不要音軌
+        "-movflags", "+faststart",
+        str(video_path),
+    ]
+    result = subprocess.run(cmd_video, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"[ERROR] 抽出視訊失敗 rc={result.returncode}\n{(result.stderr or '')[-500:]}"
         )
+    logger.info(f"[下載] 純視訊抽出完成：{video_path.stat().st_size / 1024 / 1024:.1f} MB")
 
-    logger.info(
-        f"[下載] 音訊下載完成：{downloaded_audio.stat().st_size / 1024 / 1024:.1f} MB"
-    )
+    # ---- Step 3: 從同一檔案抽出音訊為 WAV ----
+    # 關鍵：從同一個 muxed MP4 抽，保證和 video track 完美對齊
+    logger.info("[下載] 從合一 MP4 抽出音訊為 WAV ...")
+    cmd_audio = [
+        "ffmpeg", "-y",
+        "-i", str(full_path),
+        "-map", "0:a:0",
+        "-vn",  # 不要視訊
+        "-acodec", "pcm_s16le",
+        "-ar", "44100",
+        "-ac", "2",
+        str(audio_path),
+    ]
+    result = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"[ERROR] 抽出音訊失敗 rc={result.returncode}\n{(result.stderr or '')[-500:]}"
+        )
+    logger.info(f"[下載] 音訊抽出完成：{audio_path.stat().st_size / 1024 / 1024:.1f} MB")
 
-    return downloaded_video, downloaded_audio
+    # 刪除 full.mp4 以節省暫存空間（video.mp4 + audio.wav 已取代）
+    try:
+        full_path.unlink()
+        logger.info("[下載] 已刪除暫存合一檔案")
+    except Exception:
+        pass  # 刪不掉也不影響流程
+
+    return video_path, audio_path
 
 
 def stage_separate(
@@ -387,6 +422,23 @@ def stage_separate(
         samplerate=model.samplerate,
     )
 
+    # ---- 層 1:把 wav 裁到與原音訊時長一致 (杜絕 demucs 預熱 padding) ----
+    # 量原音訊時長
+    try:
+        raw_ref = AudioFile(str(audio_path)).read(streams=0)
+        if hasattr(raw_ref, "shape"):
+            ref_samples = raw_ref.shape[-1]
+        else:
+            ref_samples = len(raw_ref)
+        ref_duration_s = ref_samples / model.samplerate
+        trim_wav_to_duration(vocals_path, ref_duration_s, model.samplerate)
+        trim_wav_to_duration(no_vocals_path, ref_duration_s, model.samplerate)
+        logger.info(
+            f"[對齊] 已將 wav 裁切到原音訊時長 {ref_duration_s:.2f}s"
+        )
+    except Exception as e:
+        logger.warning(f"[對齊] 層 1 trim 失敗 (繼續): {e}")
+
     logger.info(
         f"[Demucs] 分離完成！"
         f"  人聲：{vocals_path.stat().st_size / 1024 / 1024:.1f} MB | "
@@ -424,8 +476,13 @@ def stage_mix_and_encode(
       -map "[a_out]"：使用混合後音訊
       -c:v copy    ：視訊不重新編碼
       -c:a aac     ：音訊 AAC 編碼，192k 足夠 KTV
-      -shortest    ：音訊比視訊短時自動截斷
+      -t 0         ：不限時長（傳統用 -shortest,但 -shortest 會在音訊長時砍視訊；
+                     反之若音訊比視訊長,FFmpeg 會在 muxer 階段自然截斷）
       -y            ：覆寫不提示
+
+    字幕偏移修正 (7/26)：
+      層 3:量測 demucs 輸出 wav 開頭 silence,若 > 0.05s 則在 atrim 砍掉
+      層 2:把 -shortest 換成 apad (音訊短時補無聲,絕不砍頭影音同步)
 
     回傳：最終輸出檔案路徑
     """
@@ -440,6 +497,31 @@ def stage_mix_and_encode(
 
     logger.info(f"[FFmpeg] 階段 3/3：混音與封裝 → {output_path.name}")
 
+    # ============================================================
+    # 層 3:Sanity check - 量測 leading silence 與視訊時長
+    # ============================================================
+    # 層 3:Sanity check - 量測 leading silence (alignment.compute_audio_skip)
+    # ============================================================
+    try:
+        audio_skip_s = compute_audio_skip(no_vocals_path, vocals_path)
+    except Exception as e:
+        logger.warning(f"[對齊] 層 3 sanity check 失敗,跳過 atrim: {e}")
+        audio_skip_s = 0.0
+
+    # ============================================================
+    # 層 2+3:FFmpeg 命令
+    #  - 把 -shortest 換成 apad (音訊短時補無聲,絕不砍頭)
+    #  - 若 audio_skip_s > 0,則在 [1:a] / [2:a] 入口加 atrim=start=...
+    # ============================================================
+    trim_filter = build_atrim_filter(audio_skip_s)
+    if trim_filter:
+        # 用 ',' 串接 (trim_filter 內已有完整 chain,結尾不再加 ,)
+        a_cc = f"[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo,{trim_filter}[a_cc];"
+        v_cc = f"[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo,{trim_filter}[v_cc];"
+    else:
+        a_cc = "[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[a_cc];"
+        v_cc = "[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[v_cc];"
+
     # 直接三個檔案輸入，不繞 lavfi movie= filter（容易在某些版本的 ffmpeg 與 mp4 上 invalid）
     # -i 0: 視訊
     # -i 1: 伴奏 (左/右/左/右 將被 pan 到 L)
@@ -450,11 +532,12 @@ def stage_mix_and_encode(
         "-i", str(no_vocals_path),
         "-i", str(vocals_path),
         # 濾鏡：把兩個音訊饋送都轉 stereo，再用 pan 把伴奏塞左、人聲塞右
+        # 尾端 apad 取代 -shortest:音訊短時補無聲,絕不砍頭
         "-filter_complex",
         (
-            "[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[a_cc];"
-            "[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[v_cc];"
-            "[a_cc][v_cc]amerge=inputs=2,pan=stereo|c0=c0|c1=c2[out]"
+            f"{a_cc}"
+            f"{v_cc}"
+            f"[a_cc][v_cc]amerge=inputs=2,pan=stereo|c0=c0|c1=c2[out]"
         ),
         "-map", "0:v",
         "-map", "[out]",
@@ -462,7 +545,7 @@ def stage_mix_and_encode(
         "-c:a", "aac", "-b:a", "192k",
         "-ar", "44100",
         "-ac", "2",
-        "-shortest",
+        "-t", "0",  # 0 = 不限,保險用;實際長度由視訊決定
         "-movflags", "+faststart",
         str(output_path),
     ]
