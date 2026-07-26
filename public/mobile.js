@@ -672,8 +672,83 @@ function renderSongs() {
   filtered.forEach((song) => {
     const li = renderSongCard(song, { action: 'pick' });
     li.addEventListener('click', () => pickSong(song.id));
+    attachLibraryCardSwipe(li, song);
     songList.appendChild(li);
   });
+}
+
+/**
+ * 歌曲庫卡片的 swipe-to-permanent-delete
+ * - 只在主揪模式解鎖時生效 (hostModeUnlocked)
+ * - 沒解鎖時左滑到底直接被擋掉 (不會誤刪)
+ * - 滑到底 (≤-140px) → 直接彈永久刪除 confirm modal
+ *   (走的是與長按同一條路徑,UX 一致)
+ */
+function attachLibraryCardSwipe(li, song) {
+  let startX = 0;
+  let dx = 0;
+  let sliding = false;
+  const SLIDE_DELETE_PX = 140;
+
+  const onDown = (e) => {
+    if (e.target.closest('button')) return;
+    const t = e.touches ? e.touches[0] : e;
+    startX = t.clientX;
+    dx = 0;
+    sliding = true;
+    li.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!sliding) return;
+    const t = e.touches ? e.touches[0] : e;
+    dx = t.clientX - startX;
+    // 紅色預覽: dx 越負,背景越紅
+    if (dx < 0) {
+      const intensity = Math.min(1, Math.abs(dx) / 160);
+      li.style.background = `rgba(239, 68, 68, ${intensity * 0.25})`;
+    }
+    const clamped = Math.max(-160, Math.min(0, dx));
+    li.style.transform = `translateX(${clamped}px)`;
+  };
+  const onUp = () => {
+    if (!sliding) return;
+    sliding = false;
+    li.style.transition = 'transform 0.2s ease, background 0.2s ease';
+    if (dx <= -SLIDE_DELETE_PX) {
+      // 滑到底 → 觸發永久刪 modal (主揪模式限定)
+      if (!hostModeUnlocked) {
+        // 沒解鎖: 拒絕 + 提示 (UX 友善,不解鎖到主揪按鈕)
+        li.style.transform = 'translateX(0)';
+        li.style.background = '';
+        if ('vibrate' in navigator) navigator.vibrate(60);
+        showToast('🔒 滑動刪除需要主揪模式,點下方「主揪模式」解鎖', 'error');
+        return;
+      }
+      li.style.transform = 'translateX(-100%)';
+      setTimeout(() => {
+        pendingDeleteSongId = song.id;
+        deleteSongTitle.textContent = song.title;
+        deleteModal.classList.remove('hidden');
+        // 不要把 li 移走,使用者可能按取消,卡片位置不對會很怪
+        // 反正刪除確認後 server 會 broadcast library_updated,前端會重 render
+        li.style.transform = 'translateX(0)';
+        li.style.background = '';
+      }, 180);
+    } else {
+      // 沒過門檻,彈回
+      li.style.transform = 'translateX(0)';
+      li.style.background = '';
+    }
+    dx = 0;
+  };
+
+  li.addEventListener('touchstart', onDown, { passive: true });
+  li.addEventListener('touchmove', onMove, { passive: true });
+  li.addEventListener('touchend', onUp);
+  li.addEventListener('mousedown', onDown);
+  li.addEventListener('mousemove', onMove);
+  li.addEventListener('mouseup', onUp);
+  li.addEventListener('mouseleave', onUp);
 }
 
   function escapeHtml(s) {
