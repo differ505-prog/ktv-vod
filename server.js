@@ -21,6 +21,9 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { Server } = require('socket.io');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 
 // ===== 設定 =====
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -47,6 +50,24 @@ const PIPELINE_API_TOKEN = process.env.PIPELINE_API_TOKEN || '';
 const DEMUCS_MODEL = process.env.DEMUCS_MODEL || 'htdemucs';
 const DEMUCS_FORCE_CPU = (process.env.DEMUCS_FORCE_CPU || 'false').toLowerCase() === 'true';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+
+const TV_CACHE_DIR = process.env.TV_CACHE_DIR || path.join(path.dirname(VIDEO_DIR), 'tv_cache');
+const CONFIG_FILE = path.join(path.dirname(VIDEO_DIR), 'sync_config.json');
+
+let TV_SYNC_OFFSET = 0.0;
+try {
+  if (fs.existsSync(CONFIG_FILE)) {
+    const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (data.tvSyncOffset !== undefined) TV_SYNC_OFFSET = Number(data.tvSyncOffset) || 0.0;
+  }
+} catch(e) {}
+
+function saveSyncConfig(offset) {
+  TV_SYNC_OFFSET = offset;
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ tvSyncOffset: offset }));
+  } catch(e) { log('warn', '寫入 config 失敗', { err: e.message }); }
+}
 
 // ===== Express & HTTP Server =====
 const app = express();
@@ -80,14 +101,60 @@ app.use(
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Accept-Ranges', 'bytes');
       }
-      // 寬鬆 CORS：tv.html 同源連線原則上不需要，但 <video crossorigin="anonymous">
-      // 會讓瀏覽器要求 CORS 才能把媒體餵給 MediaElementSource/Web Audio；
-      // 也避免 LAN 內 IP 直連時被擋。
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
   })
 );
+
+// ===== JIT Shadow Library 路由 =====
+app.get('/tv-videos/:filename', async (req, res) => {
+  const filename = req.params.filename;
+  if (!filename || filename.includes('..') || filename.includes('/')) {
+    return res.status(400).send('Invalid filename');
+  }
+
+  const origPath = path.join(VIDEO_DIR, filename);
+  if (!fs.existsSync(origPath)) {
+    return res.status(404).send('Not found');
+  }
+
+  // offset 極小時直接回傳原檔
+  if (Math.abs(TV_SYNC_OFFSET) < 0.01) {
+    return res.sendFile(origPath);
+  }
+
+  const shadowFilename = `${TV_SYNC_OFFSET.toFixed(2)}_${filename}`;
+  const shadowPath = path.join(TV_CACHE_DIR, shadowFilename);
+
+  if (!fs.existsSync(shadowPath)) {
+    log('info', '即時產生 TV 陰影檔', { filename, offset: TV_SYNC_OFFSET });
+    try {
+      // 刪除該歌曲的舊快取
+      const existingFiles = fs.readdirSync(TV_CACHE_DIR);
+      for (const f of existingFiles) {
+        if (f.endsWith(`_${filename}`)) {
+          try { fs.unlinkSync(path.join(TV_CACHE_DIR, f)); } catch(e) {}
+        }
+      }
+
+      // 如果 offset > 0，代表聲音太慢，必須「畫面延遲」。所以視訊軌 +offset。
+      // 如果 offset < 0，代表聲音太快，必須「聲音延遲」。所以音訊軌 +|offset|。
+      let cmd;
+      if (TV_SYNC_OFFSET > 0) {
+        cmd = `ffmpeg -y -itsoffset ${TV_SYNC_OFFSET} -i "${origPath}" -i "${origPath}" -map 0:v -map 1:a -c copy "${shadowPath}"`;
+      } else {
+        cmd = `ffmpeg -y -itsoffset ${Math.abs(TV_SYNC_OFFSET)} -i "${origPath}" -i "${origPath}" -map 1:v -map 0:a -c copy "${shadowPath}"`;
+      }
+      await execPromise(cmd);
+    } catch(err) {
+      log('error', '產生 TV 陰影檔失敗', { err: err.message });
+      return res.sendFile(origPath); // 失敗就 fallback 給原檔
+    }
+  }
+
+  res.sendFile(shadowPath);
+});
 
 // ===== 工具 =====
 function log(level, msg, extra) {
@@ -218,6 +285,49 @@ function rebuildLibrary() {
   SONG_LIBRARY = fresh;
   log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged });
   io.emit('library_updated', { songs: SONG_LIBRARY });
+
+  // ===== 新歌自動加入播放清單 =====
+  if (added.length > 0) {
+    const newSongs = fresh.filter((s) => added.includes(s.src));
+
+    // 判斷目前是否有「使用者自選」歌曲排隊中
+    // addedBy 為 'Auto' 或 undefined 的算「系統自動」，其他才算使用者自選
+    const hasUserSongs = playlist.some((s) => s.addedBy && s.addedBy !== 'Auto');
+
+    for (const song of newSongs) {
+      // 防重複：已在清單或正在播就跳過
+      const alreadyQueued =
+        playlist.some((s) => s.id === song.id) ||
+        (currentSong && currentSong.id === song.id);
+      if (alreadyQueued) continue;
+
+      const queuedSong = {
+        ...song,
+        addedBy: 'Auto',
+        addedAt: Date.now(),
+      };
+
+      if (!hasUserSongs) {
+        // 沒有使用者自選歌曲 → 插到最前面，下一首就播
+        playlist.unshift(queuedSong);
+        log('info', '新歌插隊優先播放', { title: song.title });
+      } else {
+        // 有使用者自選歌曲排隊中 → 加到最後面，尊重使用者的點歌順序
+        playlist.push(queuedSong);
+        log('info', '新歌加入排程末尾', { title: song.title });
+      }
+    }
+
+    if (!currentSong) {
+      advanceToNextSong();
+    } else {
+      io.emit('playlist_updated', {
+        playlist: [...playlist],
+        currentSong,
+      });
+    }
+  }
+
   return { changed: true, added: added.length, removed: removed.length };
 }
 
@@ -614,6 +724,17 @@ io.on('connection', (socket) => {
     playlist: [...playlist],
     audioMode,
     songHistory: [...songHistory],
+    tvSyncOffset: TV_SYNC_OFFSET,
+  });
+
+  socket.on('set_tv_sync_offset', (offset) => {
+    let num = Number(offset);
+    if (!isNaN(num)) {
+      num = Math.max(-1.0, Math.min(1.0, num)); // 限定在 -1s ~ +1s 之間
+      saveSyncConfig(num);
+      log('info', '更新 TV 影音同步參數', { tvSyncOffset: num });
+      io.emit('tv_sync_offset_updated', { tvSyncOffset: num });
+    }
   });
 
   socket.on('add_song', (songData) => {
@@ -749,6 +870,22 @@ function ensureTrashDir() {
   }
 }
 
+function ensureTvCacheDir() {
+  try {
+    if (!fs.existsSync(TV_CACHE_DIR)) {
+      fs.mkdirSync(TV_CACHE_DIR, { recursive: true });
+      log('info', 'TV_CACHE_DIR 不存在, 已建立', { dir: TV_CACHE_DIR });
+    }
+    // 啟動時清空快取避免佔用空間
+    const files = fs.readdirSync(TV_CACHE_DIR);
+    for (const f of files) {
+      if (f.endsWith('.mp4')) {
+        try { fs.unlinkSync(path.join(TV_CACHE_DIR, f)); } catch(e) {}
+      }
+    }
+  } catch(e) { log('warn', '清理或建立 TV_CACHE_DIR 失敗', { err: e.message }); }
+}
+
 // ===== 啟動伺服器 =====
 // 啟動後持續監看 VIDEO_DIR，新增/移除 mp4 時自動重掃歌曲庫並廣播給前端。
 // 雙保險：
@@ -795,6 +932,7 @@ function startLibraryWatcher() {
 
 startLibraryWatcher();
 ensureTrashDir();
+ensureTvCacheDir();
 
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();

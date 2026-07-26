@@ -45,6 +45,12 @@
   const jobsList = document.getElementById('jobsList');
   const jobsCount = document.getElementById('jobsCount');
   const jobsRefresh = document.getElementById('jobsRefresh');
+  // 設定相關
+  const btnSettings = document.getElementById('btnSettings');
+  const settingsModal = document.getElementById('settingsModal');
+  const syncSlider = document.getElementById('syncSlider');
+  const syncValue = document.getElementById('syncValue');
+  const closeSettingsBtns = document.querySelectorAll('[data-close-settings]');
   // 主揪模式 + 刪除相關 modal
   const hostModal = document.getElementById('hostModal');
   const hostPinInput = document.getElementById('hostPinInput');
@@ -116,7 +122,18 @@
     currentSong = state.currentSong;
     playlist = state.playlist || [];
     audioMode = state.audioMode || 'original';
+    if (state.tvSyncOffset !== undefined) {
+      syncSlider.value = state.tvSyncOffset;
+      syncValue.textContent = Number(state.tvSyncOffset).toFixed(2) + 's';
+    }
     renderAll();
+  });
+
+  socket.on('tv_sync_offset_updated', (data) => {
+    if (data.tvSyncOffset !== undefined) {
+      syncSlider.value = data.tvSyncOffset;
+      syncValue.textContent = Number(data.tvSyncOffset).toFixed(2) + 's';
+    }
   });
 
   socket.on('playlist_updated', (data) => {
@@ -873,10 +890,7 @@ function attachLibraryCardSwipe(li, song) {
               job.percent = 100;
               job.detail = `✅ 完成：${data.filename || ''}`;
               if (data.filename) {
-                setTimeout(() => {
-                  const song = songs.find(s => s.src && s.src.includes(data.filename));
-                  if (song) socket.emit('add_song', song.id);
-                }, 1000);
+                // 自動點歌邏輯已移至 server.js，手機端不再重複觸發以免點播兩次
               }
             } else if (data.status === 'error') {
               job.percent = 100;
@@ -1042,6 +1056,28 @@ function attachLibraryCardSwipe(li, song) {
       document.getElementById(`tab-${target}`).classList.remove('hidden');
     });
   });
+
+  // ===== 設定 Modal =====
+  if (btnSettings && settingsModal) {
+    btnSettings.addEventListener('click', () => {
+      settingsModal.classList.remove('hidden');
+    });
+    closeSettingsBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        settingsModal.classList.add('hidden');
+      });
+    });
+
+    if (syncSlider) {
+      syncSlider.addEventListener('input', (e) => {
+        syncValue.textContent = Number(e.target.value).toFixed(2) + 's';
+      });
+      syncSlider.addEventListener('change', (e) => {
+        socket.emit('set_tv_sync_offset', e.target.value);
+        showToast('已更新電視影音同步參數');
+      });
+    }
+  }
 
   // ===== 啟動 =====
   fetchSongs();

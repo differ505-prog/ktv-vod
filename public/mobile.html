@@ -2,7 +2,7 @@
 <html lang="zh-TW" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>🎤 KTV 點歌 - 手機遙控</title>
 
   <!-- Tailwind CDN -->
@@ -24,6 +24,12 @@
         radial-gradient(1200px 600px at 20% -10%, rgba(236, 72, 153, 0.25), transparent 60%),
         radial-gradient(1000px 500px at 110% 10%, rgba(99, 102, 241, 0.18), transparent 60%),
         #0a0a0f;
+      /* iOS safe-area: prevents content being hidden under home bar */
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    /* 確保捲動內容最底部也保留安全區域 */
+    .safe-bottom {
+      padding-bottom: max(7rem, calc(7rem + env(safe-area-inset-bottom, 0px)));
     }
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
@@ -119,7 +125,7 @@
 </head>
 <body class="overflow-x-hidden">
 
-  <div class="min-h-screen max-w-md mx-auto pb-28">
+  <div class="min-h-screen max-w-md mx-auto safe-bottom">
 
     <!-- Header -->
     <header class="sticky top-0 z-20 glass border-b border-white/10 px-4 py-3 flex items-center justify-between">
@@ -133,6 +139,9 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button id="btnSettings" class="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-lg" title="系統設定">
+          <i class="fa-solid fa-gear"></i>
+        </button>
         <button id="btnAddSong" class="fab w-10 h-10 rounded-full flex items-center justify-center text-xl" title="加入新歌">
           <i class="fa-solid fa-plus"></i>
         </button>
@@ -370,6 +379,34 @@
         <p class="text-xs text-gray-400 mb-3">最近刪除的歌曲（最多 50 筆）。派對誤刪？從這裡復原。</p>
         <div id="trashList" class="space-y-2 overflow-y-auto scrollbar-hide flex-1">
           <div class="text-center text-gray-500 text-sm py-6">載入中...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系統設定 Modal -->
+  <div id="settingsModal" class="fixed inset-0 z-40 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-settings></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-5 w-full max-w-md border border-white/10">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-lg"><i class="fa-solid fa-gear text-blue-400"></i> 系統設定</h3>
+          <button data-close-settings class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="space-y-6">
+          <!-- 影音同步微調 -->
+          <div class="bg-white/5 rounded-xl p-4 border border-white/5">
+            <label class="block text-sm font-bold mb-2">📺 電視影音同步微調</label>
+            <p class="text-xs text-gray-400 mb-4">如果電視端出現聲音比畫面慢的情況，請向右滑動拉桿延遲畫面。</p>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-gray-400 w-12 text-right">-0.5s</span>
+              <input type="range" id="syncSlider" min="-0.5" max="0.5" step="0.05" value="0" class="flex-1 accent-pink-500" />
+              <span class="text-xs text-gray-400 w-12" id="syncValue">0.00s</span>
+            </div>
+            <p class="text-[10px] text-pink-400 mt-2 text-center" id="syncHint">（調整後將即時重新載入歌曲）</p>
+          </div>
         </div>
       </div>
     </div>

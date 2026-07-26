@@ -140,7 +140,7 @@ def is_demucs_available() -> bool:
 # ============================================================
 # 2.5 音訊對齊 helpers (字幕偏移修正 7/26) — 抽到 alignment.py
 # ============================================================
-from alignment import (
+from ktv_pipeline.alignment import (
     get_wav_samples,
     get_wav_duration_s,
     leading_silence_seconds,
@@ -515,29 +515,35 @@ def stage_mix_and_encode(
     # ============================================================
     trim_filter = build_atrim_filter(audio_skip_s)
     if trim_filter:
-        # 用 ',' 串接 (trim_filter 內已有完整 chain,結尾不再加 ,)
-        a_cc = f"[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo,{trim_filter}[a_cc];"
-        v_cc = f"[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo,{trim_filter}[v_cc];"
+        a_cc = f"[1:a]aresample=44100,{trim_filter}[a_cc];"
+        v_cc = f"[2:a]aresample=44100,{trim_filter}[v_cc];"
     else:
-        a_cc = "[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[a_cc];"
-        v_cc = "[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[v_cc];"
+        a_cc = "[1:a]aresample=44100[a_cc];"
+        v_cc = "[2:a]aresample=44100[v_cc];"
 
-    # 直接三個檔案輸入，不繞 lavfi movie= filter（容易在某些版本的 ffmpeg 與 mp4 上 invalid）
+    video_offset = os.environ.get("VIDEO_OFFSET_S", "0.0")
+    # 直接三個檔案輸入
     # -i 0: 視訊
-    # -i 1: 伴奏 (左/右/左/右 將被 pan 到 L)
-    # -i 2: 人聲 (將被 pan 到 R)
+    # -i 1: 伴奏 (no_vocals) → 混成 mono → 放左聲道
+    # -i 2: 人聲 (vocals)    → 混成 mono → 放右聲道
+    # 用 join 把兩個 mono 流合成一個 stereo: L=伴奏, R=人聲
     cmd = [
         "ffmpeg", "-y",
+    ]
+    if float(video_offset) != 0.0:
+        cmd.extend(["-itsoffset", video_offset])
+    
+    cmd.extend([
         "-i", str(video_path),
         "-i", str(no_vocals_path),
         "-i", str(vocals_path),
-        # 濾鏡：把兩個音訊饋送都轉 stereo，再用 pan 把伴奏塞左、人聲塞右
-        # 尾端 apad 取代 -shortest:音訊短時補無聲,絕不砍頭
         "-filter_complex",
         (
             f"{a_cc}"
             f"{v_cc}"
-            f"[a_cc][v_cc]amerge=inputs=2,pan=stereo|c0=c0|c1=c2[out]"
+            "[a_cc]pan=mono|c0=0.5*c0+0.5*c1[acc_mono];"
+            "[v_cc]pan=mono|c0=0.5*c0+0.5*c1[voc_mono];"
+            "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo[out]"
         ),
         "-map", "0:v",
         "-map", "[out]",
@@ -545,10 +551,9 @@ def stage_mix_and_encode(
         "-c:a", "aac", "-b:a", "192k",
         "-ar", "44100",
         "-ac", "2",
-        "-t", "0",  # 0 = 不限,保險用;實際長度由視訊決定
         "-movflags", "+faststart",
         str(output_path),
-    ]
+    ])
 
     try:
         result = subprocess.run(

@@ -58,17 +58,14 @@
   }
 
   // ===== Web Audio API (伴奏消除核心) =====
-  // 架構：video → MediaElementSource → Splitter (LR) → Merger (LR)
-  //   'original'      : Splitter L→Merger L, R→Merger R (正常立體聲)
-  //   'vocal_off'     : Splitter L→Merger L, Splitter L→Merger R (左聲道複製到左右 → 消除右聲道人聲)
+  // 架構：video → MediaElementSource → Splitter (L=伴奏, R=人聲) → 2 個 Gain → destination
+  //   'original' (導唱): accGain=1, vocGain=1 → 伴奏＋人聲混音 = 完整原唱
+  //   'vocal_off' (伴唱): accGain=1, vocGain=0 → 只有伴奏
   let audioCtx = null;
   let sourceNode = null;
   let splitter = null;
-  let merger = null;
-  let leftGainOriginal = null;
-  let rightGainOriginal = null;
-  let leftGainVocalOff = null;
-  let rightGainVocalOff = null;
+  let accGain = null;   // L 聲道 (伴奏)
+  let vocGain = null;   // R 聲道 (人聲)
   let destinationGain = null;
   let audioReady = false;
 
@@ -84,47 +81,37 @@ function initAudioGraph() {
     if (audioReady) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioCtx();
+      // 請求最低延遲，減少 Web Audio API 造成的音訊落後 (A/V sync issue)
+      audioCtx = new AudioCtx({ latencyHint: 0 });
 
       // 把 video 音源接入 Web Audio
       sourceNode = audioCtx.createMediaElementSource(video);
 
-      // 立體聲分離
+      // 立體聲分離：port 0 = L (伴奏), port 1 = R (人聲)
       splitter = audioCtx.createChannelSplitter(2);
-      // 立體聲合併
-      merger = audioCtx.createChannelMerger(2);
 
-      // 4 條 Gain 用於在不同模式下切換
-      leftGainOriginal = audioCtx.createGain();
-      rightGainOriginal = audioCtx.createGain();
-      leftGainVocalOff = audioCtx.createGain();
-      rightGainVocalOff = audioCtx.createGain();
+      // 兩個 Gain：伴奏軌 & 人聲軌
+      accGain = audioCtx.createGain(); // L 聲道 (伴奏)
+      vocGain = audioCtx.createGain(); // R 聲道 (人聲)
 
       destinationGain = audioCtx.createGain();
       destinationGain.gain.value = 1.0;
 
-      // 接線：source → Splitter → (4 條 Gain) → Merger → destinationGain → output
+      // 接線
       sourceNode.connect(splitter);
-      splitter.connect(leftGainOriginal);
-      splitter.connect(rightGainOriginal);
-      splitter.connect(leftGainVocalOff);
-      // rightGainVocalOff 不接 splitter 的右聲道，因為伴奏模式不要右聲道
-      // 但仍占一個節點以維持固定拓樸
+      splitter.connect(accGain, 0); // port 0 = L (伴奏) → accGain
+      splitter.connect(vocGain, 1); // port 1 = R (人聲) → vocGain ← 這是關鍵！
 
-      leftGainOriginal.connect(merger, 0, 0);
-      rightGainOriginal.connect(merger, 0, 1);
-
-      leftGainVocalOff.connect(merger, 0, 0);
-      leftGainVocalOff.connect(merger, 0, 1);
-
-      merger.connect(destinationGain);
+      // 兩個 gain 都流入同一個 destination → 混音
+      accGain.connect(destinationGain);
+      vocGain.connect(destinationGain);
       destinationGain.connect(audioCtx.destination);
 
       // 初始模式：原唱
       applyAudioMode('original');
 
       audioReady = true;
-      console.log('[音訊] Web Audio 圖初始化完成');
+      console.log('[音訊] Web Audio 圖初始化完成 (新版：accGain + vocGain)');
     } catch (err) {
       console.error('[音訊] 初始化失敗：', err);
     }
@@ -136,20 +123,16 @@ function initAudioGraph() {
       return;
     }
     if (mode === 'original') {
-      // 原唱：左→左、右→右
-      leftGainOriginal.gain.value = 1.0;
-      rightGainOriginal.gain.value = 1.0;
-      leftGainVocalOff.gain.value = 0.0;
-      rightGainVocalOff.gain.value = 0.0;
+      // 導唱：伴奏 + 人聲 同時開 → 完整原唱
+      accGain.gain.value = 1.0;
+      vocGain.gain.value = 1.0;
     } else if (mode === 'vocal_off') {
-      // 伴奏：左聲道複製到左右 (等同消除右聲道的人聲)
-      leftGainOriginal.gain.value = 0.0;
-      rightGainOriginal.gain.value = 0.0;
-      leftGainVocalOff.gain.value = 1.0;
-      rightGainVocalOff.gain.value = 0.0;
+      // 伴唱：只開伴奏，人聲關掉
+      accGain.gain.value = 1.0;
+      vocGain.gain.value = 0.0;
     }
     audioModeLabel.textContent = mode === 'original' ? '原唱' : '伴奏';
-    console.log('[音訊] mode =', mode, '(Web Audio gain 切換完成，src 不動 → 無字幕偏移)');
+    console.log('[音訊] mode =', mode, '(accGain=' + (accGain ? accGain.gain.value : '?') + ', vocGain=' + (vocGain ? vocGain.gain.value : '?') + ')');
   }
 
   // ===== Socket.io 連線 =====
@@ -195,6 +178,20 @@ function initAudioGraph() {
     applyAudioMode(audioMode);
   });
 
+  // JIT 陰影檔更新時重新載入
+  socket.on('tv_sync_offset_updated', () => {
+    if (currentSongRef && video.src && !video.paused) {
+      const currentTime = video.currentTime;
+      console.log(`[Socket] 影音同步更新，重新載入歌曲於 ${currentTime}s...`);
+      // 記錄時間後重新讀取
+      const p = video.play();
+      if(p && p.catch) p.catch(() => {});
+      video.load();
+      video.currentTime = currentTime;
+      video.play().catch(e => console.warn(e));
+    }
+  });
+
   // 自動喚醒 B: 有人點歌 → 頂部中央顯示「已點播：xxx」5 秒
   // (來自 server 的 broadcast,server 會在 add_song 成功後發給所有 client)
   socket.on('song_added', ({ title, addedBy } = {}) => {
@@ -233,8 +230,14 @@ function initAudioGraph() {
     //       雖然 paused=false / readyState=4 也沒救。
     //
     // 所以：audioUnlocked=true 之前,把 src 暫存,顯示 overlay,等 user 點。
+    // 將 /videos/ 抽換為 /tv-videos/ 以便觸發 JIT 陰影快取機制
+    let tvSrc = song.src;
+    if (tvSrc && tvSrc.startsWith('/videos/')) {
+      tvSrc = tvSrc.replace('/videos/', '/tv-videos/');
+    }
+
     if (!audioUnlocked) {
-      pendingSongSrc = song.src;
+      pendingSongSrc = tvSrc;
       pendingFirstPlay = true;
       unlockOverlay.style.display = 'flex';
       console.log('[playSong] 等 user gesture, src 暫存於 pendingSongSrc');
@@ -244,8 +247,8 @@ function initAudioGraph() {
     // 已經解鎖了 → 一切照舊
     initAudioGraph(); // build/restore graph (若是首次播放)
 
-    console.log('[playSong] 設定 src =', song.src);
-    video.src = song.src;
+    console.log('[playSong] 設定 src =', tvSrc);
+    video.src = tvSrc;
     video.loop = false;
 
     // 不等 canplay — 直接嘗試播。失敗了再說。
