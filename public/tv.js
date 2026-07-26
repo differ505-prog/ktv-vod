@@ -61,6 +61,9 @@
   // 架構：video → MediaElementSource → Splitter (L=伴奏, R=人聲) → 2 個 Gain → destination
   //   'original' (導唱): accGain=1, vocGain=1 → 伴奏＋人聲混音 = 完整原唱
   //   'vocal_off' (伴唱): accGain=1, vocGain=0 → 只有伴奏
+  let fadeTimer = null;
+  let immersiveMode = false;
+  let currentTvSyncOffset = 0; // 用於強制重新整理快取的變數
   let audioCtx = null;
   let sourceNode = null;
   let splitter = null;
@@ -150,6 +153,9 @@ function initAudioGraph() {
   // 第一次 sync (後端建立連線時就會推一次，這只是保險)
   socket.on('sync_state', (state) => {
     console.log('[Socket] 同步狀態：', state);
+    if (state.tvSyncOffset !== undefined) {
+      currentTvSyncOffset = state.tvSyncOffset;
+    }
     if (state.audioMode) applyAudioMode(state.audioMode);
     if (state.currentSong) {
       playSong(state.currentSong);
@@ -179,16 +185,18 @@ function initAudioGraph() {
   });
 
   // JIT 陰影檔更新時重新載入
-  socket.on('tv_sync_offset_updated', () => {
+  socket.on('tv_sync_offset_updated', (data) => {
+    if (data && data.tvSyncOffset !== undefined) {
+      currentTvSyncOffset = data.tvSyncOffset;
+    }
     if (currentSongRef && video.src && !video.paused) {
       const currentTime = video.currentTime;
       console.log(`[Socket] 影音同步更新，重新載入歌曲於 ${currentTime}s...`);
-      // 記錄時間後重新讀取
-      const p = video.play();
-      if(p && p.catch) p.catch(() => {});
-      video.load();
-      video.currentTime = currentTime;
-      video.play().catch(e => console.warn(e));
+      // 修改 pendingSongSrc 並重新呼叫 playSong 來觸發網址變更
+      playSong(currentSongRef);
+      video.addEventListener('canplay', () => {
+        video.currentTime = currentTime;
+      }, { once: true });
     }
   });
 
@@ -234,6 +242,8 @@ function initAudioGraph() {
     let tvSrc = song.src;
     if (tvSrc && tvSrc.startsWith('/videos/')) {
       tvSrc = tvSrc.replace('/videos/', '/tv-videos/');
+      // 加上 query param，確保電視瀏覽器不會沿用舊的 Range Request 快取
+      tvSrc += `?offset=${currentTvSyncOffset}`;
     }
 
     if (!audioUnlocked) {
