@@ -56,11 +56,12 @@
   let destinationGain = null;
   let audioReady = false;
 
-  // Autoplay / Audio-Context 解鎖狀態
-  let audioUnlocked = false;
-  let pendingFirstPlay = false;
+// Autoplay / Audio-Context 解鎖狀態
+let audioUnlocked = false;
+let pendingFirstPlay = false;
+let pendingSongSrc = null; // 解鎖前先把 src 暫存在這邊,等 unlock 後才真正給 video
 
-  function initAudioGraph() {
+function initAudioGraph() {
     if (audioReady) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -175,7 +176,25 @@
     nowPlayingArtist.textContent = `${song.artist || ''} · ${song.duration || ''}`;
     standbyScreen.style.display = 'none';
 
-    initAudioGraph(); // 第一次播放時 (需 user gesture) 才建圖
+    console.log('[playSong] 收到 song =', song.src, 'audioUnlocked =', audioUnlocked);
+
+    // ===== 關鍵：在 audioContext 解鎖之前，不要碰 video.src =====
+    // 原因：MediaElementSource 一旦建立 (initAudioGraph),video 元素的
+    //       audio 解碼管線就會掛在 audioCtx 上。若 audioCtx 是 suspended,
+    //       視訊 frames 的解碼會被凍結 → currentTime 卡在 0.0,畫面沒出來,
+    //       雖然 paused=false / readyState=4 也沒救。
+    //
+    // 所以：audioUnlocked=true 之前,把 src 暫存,顯示 overlay,等 user 點。
+    if (!audioUnlocked) {
+      pendingSongSrc = song.src;
+      pendingFirstPlay = true;
+      unlockOverlay.style.display = 'flex';
+      console.log('[playSong] 等 user gesture, src 暫存於 pendingSongSrc');
+      return;
+    }
+
+    // 已經解鎖了 → 一切照舊
+    initAudioGraph(); // build/restore graph (若是首次播放)
 
     console.log('[playSong] 設定 src =', song.src);
     video.src = song.src;
@@ -183,7 +202,7 @@
 
     // 不等 canplay — 直接嘗試播。失敗了再說。
     const tryPlay = (reason) => {
-      console.log(`[video] tryPlay() 因為: ${reason}, audioUnlocked=${audioUnlocked}`);
+      console.log(`[video] tryPlay() 因為: ${reason}, audioCtx.state=${audioCtx.state}`);
       const p = video.play();
       if (p && p.catch) {
         p.then(() => console.log('[video] play() 成功 (' + reason + ')'))
@@ -198,9 +217,6 @@
 
     // canplay 之後再播,這時 buffer 已經有資料
     video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
-
-    // 自動播放失敗的 fallback:若是因為 audio suspended 影響,我們也直接播
-    // (video.play() 通常在 source 載入後就會 ready,即使 audio context 未 resume)
   }
 
   // 診斷 video 狀態 (協助找出為什麼沒畫面)
@@ -229,11 +245,11 @@
     setTimeout(() => socket.emit('song_ended'), 1500);
   });
 
-  // ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
-  async function unlockAudioPlayback() {
+// ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
+async function unlockAudioPlayback() {
     if (audioUnlocked) return;
     try {
-      // 先把 AudioContext 建好並 resume (這段必須在 gesture callback 內同步執行)
+      // 1. 先把 AudioContext 建好並 resume (這段必須在 gesture callback 內同步執行)
       initAudioGraph();
       if (audioCtx) {
         if (audioCtx.state === 'suspended') {
@@ -248,16 +264,24 @@
       }
       audioUnlocked = true;
       unlockOverlay.style.display = 'none';
-      console.log('[播放] 已解鎖 audio playback');
+      console.log('[播放] 已解鎖 audio playback, audioCtx.state=', audioCtx.state);
 
-      // 如果解鎖時有歌曲正在等,把它真的播下去
-      if (pendingFirstPlay && video.src) {
+      // 2. 解鎖後,如果有暫存的歌曲,把它真正播下去
+      if (pendingSongSrc) {
+        const src = pendingSongSrc;
+        pendingSongSrc = null;
         pendingFirstPlay = false;
-        const p = video.play();
-        if (p && p.catch) {
-          p.then(() => console.log('[播放] 解鎖後 play() 成功'))
-           .catch((err) => console.warn('[播放] 解鎖後 play() 仍失敗：', err.name, err.message));
-        }
+        console.log('[播放] 設定暫存的 src =', src);
+        video.src = src;
+        video.loop = false;
+        video.addEventListener('canplay', () => {
+          console.log('[video] canplay (解鎖後), audioCtx.state=', audioCtx.state);
+          const p = video.play();
+          if (p && p.catch) {
+            p.then(() => console.log('[video] play() 成功 (解鎖後)'))
+             .catch((err) => console.warn('[video] play() 失敗 (解鎖後)：', err.name, err.message));
+          }
+        }, { once: true });
       }
     } catch (err) {
       console.error('[播放] 解鎖失敗：', err);
