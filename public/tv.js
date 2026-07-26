@@ -177,44 +177,45 @@
 
     initAudioGraph(); // 第一次播放時 (需 user gesture) 才建圖
 
-    // resume AudioContext (瀏覽器政策：必須在 user gesture 內)
-    if (audioCtx && audioCtx.state === 'suspended') {
-      // 若已經被 unlock,直接 resume；否則把它排隊,等 user 點一下 overlay
-      if (audioUnlocked) {
-        audioCtx.resume().catch(() => {});
-      } else {
-        pendingFirstPlay = true;
-        unlockOverlay.style.display = 'flex';
-      }
-    }
-
+    console.log('[playSong] 設定 src =', song.src);
     video.src = song.src;
     video.loop = false;
-    // 等 canplay 再 play
-    const onCanPlay = () => {
-      if (!audioUnlocked && audioCtx && audioCtx.state === 'suspended') {
-        // 還在等 user gesture，把 play() 也排隊
-        pendingFirstPlay = true;
-        unlockOverlay.style.display = 'flex';
-        video.removeEventListener('canplay', onCanPlay);
-        return;
-      }
+
+    // 不等 canplay — 直接嘗試播。失敗了再說。
+    const tryPlay = (reason) => {
+      console.log(`[video] tryPlay() 因為: ${reason}, audioUnlocked=${audioUnlocked}`);
       const p = video.play();
       if (p && p.catch) {
-        p.catch((err) => {
-          if (err && err.name === 'NotAllowedError') {
-            console.warn('[播放] 等 user gesture');
+        p.then(() => console.log('[video] play() 成功 (' + reason + ')'))
+         .catch((err) => {
+            console.warn('[video] play() 失敗 (' + reason + ')：', err.name, err.message);
+            // 不管哪種失敗都先試著顯示 overlay,user 點一下會 retry
             pendingFirstPlay = true;
             unlockOverlay.style.display = 'flex';
-          } else {
-            console.warn('播放失敗：', err);
-          }
-        });
+          });
       }
-      video.removeEventListener('canplay', onCanPlay);
     };
-    video.addEventListener('canplay', onCanPlay);
+
+    // canplay 之後再播,這時 buffer 已經有資料
+    video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
+
+    // 自動播放失敗的 fallback:若是因為 audio suspended 影響,我們也直接播
+    // (video.play() 通常在 source 載入後就會 ready,即使 audio context 未 resume)
   }
+
+  // 診斷 video 狀態 (協助找出為什麼沒畫面)
+  setInterval(() => {
+    if (video.src) {
+      console.log(
+        '[video診斷] src=', video.src.split('/').pop().slice(0, 30),
+        'readyState=', video.readyState,
+        'paused=', video.paused,
+        'currentTime=', video.currentTime.toFixed(1),
+        'duration=', video.duration,
+        'error=', video.error && video.error.code
+      );
+    }
+  }, 3000);
 
   // ===== video 事件 =====
   video.addEventListener('ended', () => {
@@ -252,10 +253,10 @@
       // 如果解鎖時有歌曲正在等,把它真的播下去
       if (pendingFirstPlay && video.src) {
         pendingFirstPlay = false;
-        try {
-          await video.play();
-        } catch (err) {
-          console.warn('[播放] 解鎖後仍失敗：', err);
+        const p = video.play();
+        if (p && p.catch) {
+          p.then(() => console.log('[播放] 解鎖後 play() 成功'))
+           .catch((err) => console.warn('[播放] 解鎖後 play() 仍失敗：', err.name, err.message));
         }
       }
     } catch (err) {
