@@ -128,6 +128,33 @@
     </div>
   </div>
 
+  <!-- 左下角:全螢幕控制按鈕 (TV 端主動入口) -->
+  <div class="fixed bottom-4 left-4 z-20">
+    <button id="immersiveBtn" class="panel rounded-xl px-4 py-2.5 flex items-center gap-2 hover:bg-white/10 transition-colors shadow-2xl">
+      <i id="immersiveIcon" class="fa-solid fa-expand text-pink-400"></i>
+      <span id="immersiveBtnLabel" class="text-sm font-medium">全螢幕</span>
+    </button>
+  </div>
+
+  <!-- Mobile 請求 dialog (瀏覽器要求 user gesture 才能進 fullscreen) -->
+  <div id="immersiveDialog" class="hidden fixed inset-0 z-40 bg-black/70 backdrop-blur-md flex items-center justify-center">
+    <div class="panel rounded-3xl p-8 max-w-md text-center shadow-2xl">
+      <div class="text-6xl mb-4 animate-bounce">📺</div>
+      <h2 class="text-2xl font-bold glow-text mb-3">手機請求全螢幕</h2>
+      <p class="text-gray-300 text-sm leading-relaxed mb-6">
+        瀏覽器需要你點一下按鈕才能進入全螢幕。<br/>
+        按下方按鈕即可進入觀影模式。
+      </p>
+      <button id="immersiveDialogConfirm" class="px-8 py-3 bg-pink-500 hover:bg-pink-600 rounded-xl text-lg font-bold flex items-center gap-2 mx-auto transition-colors">
+        <i class="fa-solid fa-expand"></i>
+        進入全螢幕
+      </button>
+      <button id="immersiveDialogCancel" class="block mx-auto mt-4 text-sm text-gray-400 hover:text-gray-200 transition-colors">
+        取消
+      </button>
+    </div>
+  </div>
+
   <!-- 首次播放解鎖 overlay (瀏覽器 autoplay policy) -->
   <div id="unlockOverlay" class="fixed inset-0 z-30 bg-black/80 flex items-center justify-center cursor-pointer backdrop-blur-md">
     <div class="text-center p-8 panel rounded-3xl max-w-lg">

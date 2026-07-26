@@ -21,11 +21,20 @@
   const unlockOverlay = document.getElementById('unlockOverlay');
   const nowPlayingBarTitle = document.getElementById('nowPlayingBarTitle');
   const nowPlayingBarArtist = document.getElementById('nowPlayingBarArtist');
+  const immersiveBtn = document.getElementById('immersiveBtn');
+  const immersiveBtnLabel = document.getElementById('immersiveBtnLabel');
+  const immersiveIcon = document.getElementById('immersiveIcon');
+  const immersiveDialog = document.getElementById('immersiveDialog');
+  const immersiveDialogConfirm = document.getElementById('immersiveDialogConfirm');
+  const immersiveDialogCancel = document.getElementById('immersiveDialogCancel');
 
   // ===== 沉浸模式狀態 =====
   let immersive = false;          // 是否進入沉浸模式 (CSS class)
   let nowPlayingFadeTimer = null; // 沉浸模式時,「目前播放 bar」的 fade timer
   const NOW_PLAYING_FADE_MS = 3000;
+  // Mobile 發請求時,server 會廣播 toggle_immersive 給所有 client (含 tv 自己回報的)。
+  // 為了避免 tv 自己的回報被當成「新請求」再彈 dialog,這個 flag 用來辨識「來源是誰」。
+  let lastImmersiveBroadcastImmersive = null;
 
   // ===== 產生 QR Code =====
   // 內容：http://[伺服器IP]:[Port]/mobile.html
@@ -348,6 +357,9 @@ async function unlockAudioPlayback() {
     document.body.classList.add('immersive');
     scheduleNowPlayingFade();
     requestFullscreenCompat();
+    // 廣播給 server/mobile (server 會再 io.emit 回來給 tv,但因為值 == immersive
+    // 會被 toggle_immersive handler 忽略)
+    socket.emit('toggle_immersive', { immersive: true });
     console.log('[immersive] 進入沉浸模式');
   }
 
@@ -365,6 +377,8 @@ async function unlockAudioPlayback() {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
       if (exit) exit.call(document).catch(() => {});
     }
+    // 廣播給 server/mobile
+    socket.emit('toggle_immersive', { immersive: false });
     console.log('[immersive] 退出沉浸模式');
   }
 
@@ -407,13 +421,82 @@ async function unlockAudioPlayback() {
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('webkitfullscreenchange', onFsChange);
 
-  // 接收 mobile 端的切換指令
-  // server.js 用 io.emit(...) 廣播,所有 client 都收得到,這裡只接收自己關心的
-  socket.on('toggle_immersive', ({ immersive: wantImmersive } = {}) => {
-    if (typeof wantImmersive === 'boolean') {
-      wantImmersive ? enterImmersive() : exitImmersive();
+  function updateImmersiveBtnUI() {
+    if (immersive) {
+      immersiveBtnLabel.textContent = '退出全螢幕';
+      immersiveIcon.className = 'fa-solid fa-compress text-pink-400';
     } else {
-      immersive ? exitImmersive() : enterImmersive();
+      immersiveBtnLabel.textContent = '全螢幕';
+      immersiveIcon.className = 'fa-solid fa-expand text-pink-400';
+    }
+  }
+
+  function showImmersiveDialog() {
+    immersiveDialog.classList.remove('hidden');
+  }
+  function hideImmersiveDialog() {
+    immersiveDialog.classList.add('hidden');
+  }
+
+  // TV 端主動按鈕:直接進/出(有 user gesture)
+  immersiveBtn.addEventListener('click', () => {
+    if (immersive) {
+      exitImmersive();
+    } else {
+      enterImmersive();
+    }
+    updateImmersiveBtnUI();
+  });
+
+  // dialog 確認 → 進入全螢幕 (有 user gesture,瀏覽器才會接受)
+  immersiveDialogConfirm.addEventListener('click', () => {
+    hideImmersiveDialog();
+    enterImmersive();
+    updateImmersiveBtnUI();
+  });
+  immersiveDialogCancel.addEventListener('click', () => {
+    hideImmersiveDialog();
+    // 取消時廣播 false,讓 mobile 按鈕狀態回到「TV 全螢幕」
+    socket.emit('toggle_immersive', { immersive: false });
+  });
+
+  // 接收 mobile 端的切換請求
+  // 重要:server 廣播會「也回送給 tv 自己」(io.emit),所以 tv 自己的 emit 後
+  // 會再收到一次。這裡用「廣播回來的值 == tv 自己目前狀態」這個跡象忽略它,
+  // 避免 tv 自己的回報變成自我觸發彈 dialog。
+  socket.on('toggle_immersive', ({ immersive: wantImmersive } = {}) => {
+    if (typeof wantImmersive !== 'boolean') {
+      // 沒指定 → 切換(保留舊行為,相容舊版)
+      if (immersive) exitImmersive();
+      else enterImmersive();
+      updateImmersiveBtnUI();
+      return;
+    }
+
+    // 若 server 回報的狀態 == 我目前狀態,代表這是「我自己剛剛 emit 出去又彈回來」
+    //   → 視為同步訊號,不要再彈 dialog。
+    if (wantImmersive === immersive) {
+      console.log('[immersive] toggle_immersive 廣播 = 自己目前狀態,當作同步訊號忽略');
+      return;
+    }
+
+    // wantImmersive === true 且目前為 false → 代表「有人想進入全螢幕」
+    //  - 若 tv 自己按鈕時,上面已直接處理(廣播回來會被上面 if 擋掉)
+    //  - 從 mobile 進來時 → 廣播回來時 wantImmersive=true 且 tv 還是 false → 一定是 mobile 觸發
+    if (wantImmersive === true) {
+      // 已在 fullscreen?就直接進入 (ESC 之類的狀態)
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        enterImmersive();
+        updateImmersiveBtnUI();
+      } else {
+        // 沒有 user gesture,不能直接 requestFullscreen → 請 tv user 按確認
+        console.log('[immersive] Mobile 請求進入全螢幕 → 顯示 dialog');
+        showImmersiveDialog();
+      }
+    } else {
+      // wantImmersive === false → 有人要退出 → 直接執行
+      exitImmersive();
+      updateImmersiveBtnUI();
     }
   });
 
