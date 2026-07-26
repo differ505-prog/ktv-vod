@@ -217,6 +217,10 @@ function rebuildLibrary() {
   const previousLocal = new Set(
     SONG_LIBRARY.filter((s) => s.source === 'local').map((s) => s.src)
   );
+  // 同時記住每首 local 歌的 srcVocalOff（含 null），給「vocal_off 檔出現/消失」時也能更新
+  const previousVocalOff = new Map(
+    SONG_LIBRARY.filter((s) => s.source === 'local').map((s) => [s.src, s.srcVocalOff || null])
+  );
 
   const fresh = buildSongLibrary();
   const freshIds = new Set(fresh.map((s) => s.id));
@@ -227,12 +231,24 @@ function rebuildLibrary() {
   const added = [...freshLocal].filter((x) => !previousLocal.has(x));
   const removed = [...previousLocal].filter((x) => !freshLocal.has(x));
 
-  if (added.length === 0 && removed.length === 0) {
+  // 偵測 srcVocalOff 變動：同一首的 srcVocalOff 從 null → 有 或 反之
+  let vocalOffChanged = false;
+  for (const song of fresh.filter((s) => s.source === 'local')) {
+    const prev = previousVocalOff.get(song.src);
+    const cur = song.srcVocalOff || null;
+    if (prev !== cur) {
+      vocalOffChanged = true;
+      log('info', 'srcVocalOff 變動', { title: song.title, from: prev, to: cur });
+      break;
+    }
+  }
+
+  if (added.length === 0 && removed.length === 0 && !vocalOffChanged) {
     return { changed: false, added: 0, removed: 0 };
   }
 
   SONG_LIBRARY = fresh;
-  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length });
+  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged });
   io.emit('library_updated', { songs: SONG_LIBRARY });
   return { changed: true, added: added.length, removed: removed.length };
 }
