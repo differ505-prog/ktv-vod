@@ -730,7 +730,7 @@ io.on('connection', (socket) => {
   socket.on('set_tv_sync_offset', (offset) => {
     let num = Number(offset);
     if (!isNaN(num)) {
-      num = Math.max(-1.0, Math.min(1.0, num)); // 限定在 -1s ~ +1s 之間
+      num = Math.max(-3.0, Math.min(3.0, num)); // 限定在 -3s ~ +3s 之間
       saveSyncConfig(num);
       log('info', '更新 TV 影音同步參數', { tvSyncOffset: num });
       io.emit('tv_sync_offset_updated', { tvSyncOffset: num });
