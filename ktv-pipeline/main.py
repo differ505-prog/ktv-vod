@@ -312,10 +312,19 @@ def stage_separate(
 
     # ---- 讀取音訊 ----
     logger.info("[Demucs] 載入音訊檔 ...")
-    wav = AudioFile(str(audio_path)).read(streams=0)
-    # 標準化為 float32，shape: (channels, samples)
     import numpy as np
-    wav = wav.astype(np.float32)
+    raw = AudioFile(str(audio_path)).read(streams=0)
+    # demucs 4.x 的 AudioFile.read() 回傳 torch.Tensor (channels, samples),
+    # 而後面需要的是 numpy 陣列以便 torch.from_numpy() 處理
+    if hasattr(raw, "cpu"):  # torch.Tensor
+        wav = raw.detach().cpu().numpy().astype(np.float32)
+    else:  # 已經是 numpy.ndarray (舊版 demucs)
+        wav = np.asarray(raw, dtype=np.float32)
+    # 保證 shape: (channels, samples) 二維
+    if wav.ndim == 1:
+        wav = wav[np.newaxis, :]     # 單聲道: (samples,) → (1, samples)
+    elif wav.ndim == 3 and wav.shape[0] == 1:
+        wav = np.squeeze(wav, axis=0)
 
     # ---- 推到指定 device ----
     wav_tensor = torch.from_numpy(wav).to(device)
