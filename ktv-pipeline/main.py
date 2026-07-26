@@ -193,8 +193,10 @@ def stage_download(
     logger.info("[下載] 階段 1/3：下載最高畫質無音軌影片 ...")
     try:
         ydl_video_opts = {
-            "format": "bestvideo[ext=mp4]",
-            "outtmpl": str(temp_dir / "video"),
+            # 優先 MP4，否則退回任意最佳 video format（會在後面用 ffmpeg 統一轉成 MP4）
+            "format": "bestvideo[ext=mp4][height<=1080]/bestvideo[ext=mp4]/bestvideo",
+            # outtmpl 含 %(ext)s 才能保留原始副檔名（否則只會叫 'video' 無副檔名）
+            "outtmpl": str(temp_dir / "video.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "merge_output_format": "mp4",
@@ -204,18 +206,19 @@ def stage_download(
     except Exception as e:
         raise RuntimeError(f"[ERROR] 影片下載失敗：{e}") from e
 
-    # yt-dlp 下載後副檔名由 output format 決定，找實際產出的 .mp4
-    downloaded_video = next(temp_dir.glob("video.mp4"), None)
-    if not downloaded_video or not downloaded_video.exists():
-        # 可能副檔名不同，列一下目錄
+    # 列出實際下載到的影片檔（可能是 video.mp4、video.webm 等）
+    downloaded_video = next(temp_dir.glob("video.*"), None)
+    if not downloaded_video or not downloaded_video.exists() or downloaded_video.suffix == "":
         files = list(temp_dir.iterdir())
         logger.warning(f"[下載] temp 目錄內容：{[f.name for f in files]}")
         raise FileNotFoundError(
             f"[ERROR] 找不到下載的影片檔，請確認 yt-dlp 支援此 URL。目錄內容：{files}"
         )
-    # 確保副檔名正確（若 yt-dlp 產生其他格式）
-    if downloaded_video.suffix != ".mp4":
+    # 統一規範成 video.mp4（後面 ffmpeg 接受 MP4 container）
+    if downloaded_video.name != "video.mp4":
         renamed = temp_dir / "video.mp4"
+        if renamed.exists():
+            renamed.unlink()
         downloaded_video.rename(renamed)
         downloaded_video = renamed
 
