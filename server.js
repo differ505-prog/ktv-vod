@@ -172,16 +172,22 @@ function scanLocalVideos() {
       for (const f of files) {
         idx += 1;
         const name = path.basename(f, path.extname(f));
+        // 跳過已經是 vocal_off 變體，避免在 library 重複出現
+        if (/_vocal_off$/.test(name)) continue;
         // 檔名慣例：「歌手 - 標題」會自動切割
         const sep = name.indexOf(' - ');
         const artist = sep > 0 ? name.slice(0, sep).trim() : '本機歌曲';
         const title = sep > 0 ? name.slice(sep + 3).trim() : name;
+        // 若對應的 *_vocal_off.mp4 存在，就帶 srcVocalOff 給 TV 切換
+        const vocalOffName = `${name}_vocal_off.mp4`;
+        const vocalOffExists = fs.existsSync(path.join(VIDEO_DIR, vocalOffName));
         local.push({
           id: `local-${String(idx).padStart(3, '0')}`,
           title,
           artist,
           duration: '未知',
           src: toPublicUrl(f), // 透過 /videos prefix 提供
+          srcVocalOff: vocalOffExists ? toPublicUrl(vocalOffName) : null,
           cover: null,
           source: 'local',
         });
