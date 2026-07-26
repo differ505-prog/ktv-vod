@@ -514,11 +514,14 @@ io.on('connection', (socket) => {
     io.emit('change_audio_mode', { audioMode });
   });
 
-  // TV 沉浸模式切換:tv 端收到事件後自己處理 CSS + fullscreen,
-  // 若 tv 被 user 用 ESC 退出瀏覽器 fullscreen,這裡要把狀態廣播給所有
-  // mobile,讓按鈕狀態正確同步。
+  // TV 沉浸模式切換:
+  //   mobile 觸發 → server 廣播 'toggle_immersive' 給所有 client (tv 收到後執行 fullscreen)
+  //                同時廣播 'immersive_state' 給所有 client (mobile 按鈕同步)
+  //   tv 觸發    → 同樣廣播給所有 (例如 ESC 退出時由 tv 自己 emit,server 再回報)
   socket.on('toggle_immersive', ({ immersive } = {}) => {
     log('info', 'TV 沉浸模式', { immersive });
+    // 用 io.emit 而非 socket.emit,確保 tv 自己也收到 (若 mobile 先觸發)
+    io.emit('toggle_immersive', { immersive: !!immersive });
     io.emit('immersive_state', { immersive: !!immersive });
   });
 
