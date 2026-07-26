@@ -36,6 +36,8 @@
 | **TrueNAS Scale** | ✅ 完全支援 | Compose 內建 |
 | **自組 Linux (Ubuntu/Debian)** | ✅ 完全支援 | Docker CE 直接裝 |
 
+> **本專案目前實際 NAS**：自組 Linux（不是 Synology / QNAP），部署路徑見後面「目前這台 NAS 的實際部署」一節。
+
 ---
 
 ## ⚡ 五分鐘快速部署 (Docker Compose)
@@ -166,6 +168,69 @@ Pipeline 會：
 3. 混音成 `_ktv.mp4` 輸出到 `ktv-data/videos/`
 4. 自動加入 Node 中控的歌曲庫
 
+> ⚠️ API 路徑的 `/process-youtube` 與 `192.168.1.100` 為通用範例；本專案實際 NAS 請改用 [§目前這台 NAS 的實際部署](#目前這台-nas-的實際部署) 裡的 host / port。
+
+---
+
+## 目前這台 NAS 的實際部署
+
+> 這一節是**本專案這台 NAS** 的實際現況，跟前面「通用 Synology 範例」不同。
+
+### 連線資訊
+
+| 項目 | 值 |
+| --- | --- |
+| SSH | `ssh vibe@192.168.31.47` |
+| 密碼 | `05050505` |
+| 專案根目錄 | `/home/vibe/ktv-vod/` |
+| `public/` 前端 | `/home/vibe/ktv-vod/public/` |
+| `ktv-data/` volume | `/home/vibe/ktv-vod/ktv-data/` |
+
+### 對外服務 port
+
+| 服務 | 容器 | Host port | 備註 |
+| --- | --- | --- | --- |
+| KTV Brain (Node 中控 + 前端) | `ktv-brain` | **3001** | Host port 3000 被 `homepage` 佔用 |
+| KTV Pipeline (Python) | `ktv-pipeline` | 5050 | |
+| Homepage | `homepage` | 3000 | **不是 KTV**，不要從 port 3000 點歌 |
+
+使用者入口：
+- 電視：`http://192.168.31.47:3001/tv.html`
+- 手機：`http://192.168.31.47:3001/mobile.html`
+
+### 快速更新前端（`public/`，免重啟）
+
+```bash
+SSHPASS='05050505' rsync -avz \
+  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+  --checksum \
+  --exclude='.DS_Store' \
+  public/ \
+  vibe@192.168.31.47:/home/vibe/ktv-vod/public/
+```
+
+- `public/` 是用 volume mount 進容器的（`./public:/app/public:ro`），所以**毋需重啟任何服務**。
+- 使用者重新整理瀏覽器（Cmd+Shift+R）即可拿到新版。
+- `--checksum` 確保只動真正有差異的檔案。
+
+### 快速更新 Pipeline（Python，要重啟）
+
+```bash
+bash ktv-pipeline/deploy_via_ssh.sh ktv-pipeline
+```
+
+- 這支 script 預設連 `vibe@192.168.31.47` 並把 `main.py / alignment.py / test_alignment.py` 推進 `ktv-pipeline` 容器。
+- 部署後會自動跑 pytest 驗證。
+
+### 升級完整服務（Docker image 重建）
+
+```bash
+ssh vibe@192.168.31.47
+cd /home/vibe/ktv-vod
+git pull
+docker compose up -d --build
+```
+
 ---
 
 ## 🔄 日常維護
@@ -173,7 +238,8 @@ Pipeline 會：
 ### 升級程式碼
 
 ```bash
-cd /volume1/docker/ktv
+ssh vibe@192.168.31.47
+cd /home/vibe/ktv-vod
 git pull
 docker compose up -d --build
 ```
@@ -184,7 +250,7 @@ docker compose up -d --build
 # 整包打包
 docker run --rm \
   -v ktv-data:/source:ro \
-  -v /volume1/backups:/dest \
+  -v /home/vibe/ktv-vod/backups:/dest \
   alpine tar czf /dest/ktv-data-$(date +%Y%m%d).tar.gz -C /source .
 ```
 
@@ -254,24 +320,26 @@ hostname -I
 部署完之後，你的 NAS 上會有：
 
 ```
-/volume1/docker/ktv/                    ← 程式碼倉庫
-├── .env                                 ← 你的密碼/token
+/home/vibe/ktv-vod/                  ← 程式碼倉庫
+├── .env                             ← 你的密碼/token
 ├── docker-compose.yml
 ├── server.js
 ├── public/
 │   ├── tv.html / tv.js
 │   └── mobile.html / mobile.js
 ├── ktv-pipeline/
-│   ├── main.py                          ← Python 處理腳本
+│   ├── main.py                      ← Python 處理腳本
 │   └── requirements.txt
 ├── pipeline_server.py
 ├── Dockerfile.node
 ├── Dockerfile.pipeline
-└── ktv-data/                           ← Docker volume
-    ├── videos/                          ← 已處理的 mp4
-    ├── processed/                       ← Pipeline 產出
-    └── work/                            ← 暫存 (會自動清理)
+└── ktv-data/                        ← Docker volume
+    ├── videos/                      ← 已處理的 mp4
+    ├── processed/                   ← Pipeline 產出
+    └── work/                        ← 暫存 (會自動清理)
 ```
+
+> 「通用 Synology 範例」對應的路徑是 `/volume1/docker/ktv/`。本專案這台 NAS 實際用 `/home/vibe/ktv-vod/`，兩者差異見「目前這台 NAS 的實際部署」一節。
 
 ---
 

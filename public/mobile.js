@@ -163,88 +163,145 @@
     }
   }
 
-  function renderNowPlaying() {
-    if (!currentSong) {
-      npTitle.textContent = '等待點歌...';
-      npArtist.textContent = '掃描電視 QR 或點下方歌曲加入點歌列隊';
-      npCover.classList.add('opacity-0');
-      npQueue.innerHTML = '<i class="fa-solid fa-list-ol"></i> 佇列 0 首';
-    } else {
-      npTitle.textContent = currentSong.title;
-      npArtist.textContent = `${currentSong.artist || ''} · ${currentSong.duration || ''}`;
-      if (currentSong.cover) {
-        npCover.src = currentSong.cover;
-        npCover.onload = () => npCover.classList.remove('opacity-0');
-        npCover.onerror = () => npCover.classList.add('opacity-0');
-      }
-      npQueue.innerHTML = `<i class="fa-solid fa-list-ol"></i> 佇列 ${playlist.length} 首`;
-    }
-    if (audioMode === 'vocal_off') {
-      npMode.innerHTML = '<i class="fa-solid fa-guitar"></i> 伴奏';
-      npMode.className = 'px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300';
-    } else {
-      npMode.innerHTML = '<i class="fa-solid fa-microphone"></i> 原唱';
-      npMode.className = 'px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300';
-    }
+function renderNowPlaying() {
+  if (!currentSong) {
+    npTitle.textContent = '等待點歌...';
+    npArtist.textContent = '掃描電視 QR 或點下方歌曲加入點歌列隊';
+    npCover.classList.add('opacity-0');
+    npQueue.innerHTML = '<i class="fa-solid fa-list-ol"></i> 佇列 0 首';
+    return;
   }
 
-  function renderQueue() {
-    queueList.innerHTML = '';
-    if (playlist.length === 0) {
-      queueEmpty.classList.remove('hidden');
-      return;
-    }
-    queueEmpty.classList.add('hidden');
-    playlist.forEach((song, idx) => {
-      const li = document.createElement('div');
-      li.className = 'glass rounded-xl p-3 flex items-center gap-3 song-card';
-      li.innerHTML = `
-        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
-          ${idx + 1}
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="font-medium text-sm truncate">${escapeHtml(song.title)}</div>
-          <div class="text-xs text-gray-400 truncate">${escapeHtml(song.artist || '')} · ${escapeHtml(song.duration || '')}</div>
-        </div>
-        <div class="text-[10px] text-gray-500">
-          <i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}
-        </div>
-      `;
-      queueList.appendChild(li);
-    });
+  // 主標題 (歌名)
+  npTitle.textContent = currentSong.title || '—';
+
+  // 副標題: 歌手 + 專輯 + 時長
+  const parts = [];
+  if (currentSong.artist) parts.push(currentSong.artist);
+  if (currentSong.album) parts.push(currentSong.album);
+  if (currentSong.duration) parts.push(currentSong.duration);
+  npArtist.textContent = parts.length > 0 ? parts.join(' · ') : '—';
+
+  // 封面 (oEmbed thumbnail)
+  if (currentSong.cover) {
+    npCover.src = currentSong.cover;
+    npCover.onload = () => npCover.classList.remove('opacity-0');
+    npCover.onerror = () => npCover.classList.add('opacity-0');
+  } else {
+    npCover.removeAttribute('src');
+    npCover.classList.add('opacity-0');
   }
 
-  function renderSongs() {
-    const q = (searchInput.value || '').trim().toLowerCase();
-    songList.innerHTML = '';
-    const filtered = q
-      ? songs.filter((s) => (s.title + ' ' + s.artist).toLowerCase().includes(q))
-      : songs;
-    if (filtered.length === 0) {
-      songList.innerHTML = '<div class="text-center text-gray-500 py-8 text-sm">找不到符合的歌曲</div>';
-      return;
-    }
-    filtered.forEach((song) => {
-      const li = document.createElement('button');
-      li.className = 'w-full glass rounded-xl p-3 flex items-center gap-3 song-card text-left';
-      li.innerHTML = `
-        <div class="w-12 h-12 rounded-lg overflow-hidden bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
-          ${song.cover
-            ? `<img src="${song.cover}" class="w-full h-full object-cover" onerror="this.style.display='none'" />`
-            : '<i class="fa-solid fa-music"></i>'}
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="font-medium text-sm truncate">${escapeHtml(song.title)}</div>
-          <div class="text-xs text-gray-400 truncate">${escapeHtml(song.artist || '')} · ${escapeHtml(song.duration || '')}</div>
-        </div>
-        <div class="cyan-btn rounded-lg px-3 py-1.5 text-xs font-bold flex items-center gap-1">
-          <i class="fa-solid fa-plus"></i> 點歌
-        </div>
-      `;
-      li.addEventListener('click', () => pickSong(song.id));
-      songList.appendChild(li);
-    });
+  npQueue.innerHTML = `<i class="fa-solid fa-list-ol"></i> 佇列 ${playlist.length} 首`;
+
+  if (audioMode === 'vocal_off') {
+    npMode.innerHTML = '<i class="fa-solid fa-guitar"></i> 伴奏';
+    npMode.className = 'px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300';
+  } else {
+    npMode.innerHTML = '<i class="fa-solid fa-microphone"></i> 原唱';
+    npMode.className = 'px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300';
   }
+}
+
+/**
+ * 兩行卡片 (方案 B — 9.5/10):
+ *   ┌─────────────────────────────────────┐
+ *   │ 🎵  夜曲                  [+ 點歌]  │
+ *   │     周杰倫 · 十一月的蕭邦 · 4:32    │
+ *   └─────────────────────────────────────┘
+ */
+function renderSongCard(song, opts = {}) {
+  const { action = 'pick', index = null } = opts;
+  const li = document.createElement('button');
+  li.className = 'w-full glass rounded-xl p-3 flex items-center gap-3 song-card text-left';
+  li.dataset.songId = song.id;
+
+  const durationStr = song.duration ? ` · ${escapeHtml(song.duration)}` : '';
+  const albumStr = song.album ? ` · ${escapeHtml(song.album)}` : '';
+  const artistLine = `${escapeHtml(song.artist || '未知歌手')}${albumStr}${durationStr}`;
+  const titleLine = escapeHtml(song.title || '未知歌曲');
+
+  // 封面 (oEmbed thumbnail, 失敗會 fallback 為音符 icon)
+  const coverHtml = song.cover
+    ? `<img src="${escapeHtml(song.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fa-solid fa-music\\'></i>'" />`
+    : '<i class="fa-solid fa-music"></i>';
+
+  const indexHtml = index !== null
+    ? `<div class="w-8 text-center text-pink-400 font-bold text-sm flex-shrink-0">${index + 1}</div>`
+    : '';
+
+  const actionHtml = action === 'queue'
+    ? `<div class="text-[10px] text-gray-500"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
+    : `<div class="cyan-btn rounded-lg px-3 py-1.5 text-xs font-bold flex items-center gap-1 flex-shrink-0">
+         <i class="fa-solid fa-plus"></i> 點歌
+       </div>`;
+
+  li.innerHTML = `
+    ${indexHtml}
+    <div class="w-12 h-12 rounded-lg overflow-hidden bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+      ${coverHtml}
+    </div>
+    <div class="flex-1 min-w-0 overflow-hidden">
+      <div class="font-medium text-sm leading-tight line-clamp-2 break-words" title="${titleLine}">${titleLine}</div>
+      <div class="text-xs text-gray-400 truncate mt-0.5" title="${artistLine}">${artistLine}</div>
+    </div>
+    ${actionHtml}
+  `;
+
+  if (action === 'queue') {
+    // 佇列卡不能點
+    li.disabled = false;
+    li.classList.remove('cursor-pointer');
+  }
+
+  return li;
+}
+
+function renderQueue() {
+  queueList.innerHTML = '';
+  if (playlist.length === 0) {
+    queueEmpty.classList.remove('hidden');
+    return;
+  }
+  queueEmpty.classList.add('hidden');
+  playlist.forEach((song, idx) => {
+    const li = renderSongCard(song, { action: 'queue', index: idx });
+    queueList.appendChild(li);
+  });
+}
+
+/**
+ * 搜尋邏輯 (方案 B — 9.0/10):
+ *   同時比對: 中文標題 / 中文歌手 / 拼音標題 / 拼音歌手
+ *   例：輸入 "yeqv" 找不到 "夜曲", 但輸入 "ye qu" 可以命中
+ *   例：輸入 "jay" 可命中 "Jay Chou" 系列
+ */
+function matchSong(song, q) {
+  if (!q) return true;
+  const fields = [
+    song.title,
+    song.artist,
+    song.album || '',
+    song.pinyinTitle || '',
+    song.pinyinArtist || '',
+  ];
+  return fields.some((f) => String(f || '').toLowerCase().includes(q));
+}
+
+function renderSongs() {
+  const q = (searchInput.value || '').trim().toLowerCase();
+  songList.innerHTML = '';
+  const filtered = songs.filter((s) => matchSong(s, q));
+  if (filtered.length === 0) {
+    songList.innerHTML = '<div class="text-center text-gray-500 py-8 text-sm">找不到符合的歌曲</div>';
+    return;
+  }
+  filtered.forEach((song) => {
+    const li = renderSongCard(song, { action: 'pick' });
+    li.addEventListener('click', () => pickSong(song.id));
+    songList.appendChild(li);
+  });
+}
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (m) => ({
@@ -367,6 +424,12 @@
             if (data.status === 'done') {
               job.percent = 100;
               job.detail = `✅ 完成：${data.filename || ''}`;
+              if (data.filename) {
+                setTimeout(() => {
+                  const song = songs.find(s => s.src && s.src.includes(data.filename));
+                  if (song) socket.emit('add_song', song.id);
+                }, 1000);
+              }
             } else if (data.status === 'error') {
               job.percent = 100;
               job.detail = `❌ ${data.error || '處理失敗'}`;
