@@ -56,17 +56,20 @@ for src in "${TARGETS[@]}"; do
   echo "[extract_vocal_off] $(basename "$src") → $(basename "$out")"
   # -i src       視訊 + 音訊
   # -map 0:v     直接 copy 視訊（不重編碼，速度秒回）
-  # -filter_complex [0:a]pan=stereo|c0=c0|c1=c0[a]
-  #   把 L channel 同時複製到 LR → 整支 mp4 是「雙聲道伴奏版」
-  # -map [a]     使用 pan 處理過的音訊
+  # -filter_complex [0:a]pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0[a]
+  #   - pan: 把 L channel 同時複製到 LR → 整支 mp4 是「雙聲道伴奏版」
+  #   - aresample=async=1:first_pts=0: 強制音訊第一個 frame 的 PTS=0，
+  #     並讓 pan filter 的內部緩衝（造成 playback 延遲）被 resampler 對齊，
+  #     確保切換 mp4 後字幕不偏移。
+  # -map [a]     使用 filter 處理過的音訊
   # -c:a aac -b:a 192k   重新編碼為 AAC
-  # -shortest    取最短媒體（避免音訊比視訊長）
   # -movflags +faststart  改寫 moov box 到檔頭，網頁播放首幀更快
+  # 不加 -shortest：避免 ffmpeg 在 mp4 邊界偷偷 truncate 或延遲首 frame。
   ffmpeg -y -i "$src" \
     -map 0:v -c:v copy \
-    -filter_complex "[0:a]pan=stereo|c0=c0|c1=c0[a]" \
+    -filter_complex "[0:a]pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0[a]" \
     -map "[a]" -c:a aac -b:a 192k -ar 44100 -ac 2 \
-    -shortest -movflags +faststart \
+    -movflags +faststart \
     "$out" \
     -loglevel error -stats
 
