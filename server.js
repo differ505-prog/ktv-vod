@@ -295,10 +295,12 @@ app.post('/api/songs/delete', (req, res) => {
   }
 
   // 計算實體檔案路徑 (src 是 URL,要還原到 VIDEO_DIR 的 basename)
+  // 重要:pathname 會做 percent-encoding,但中文檔名磁碟上是 raw UTF-8
+  //   所以需要 decodeURIComponent 才能對到實際檔案
   const sources = [];
-  const srcBasename = path.basename(new URL(song.src, 'http://x').pathname);
+  const srcBasename = decodeURIComponent(path.basename(new URL(song.src, 'http://x').pathname));
   const srcVocalBasename = song.srcVocalOff
-    ? path.basename(new URL(song.srcVocalOff, 'http://x').pathname)
+    ? decodeURIComponent(path.basename(new URL(song.srcVocalOff, 'http://x').pathname))
     : null;
   sources.push({ role: 'src', abs: path.join(VIDEO_DIR, srcBasename), fileName: srcBasename });
   if (srcVocalBasename) {
