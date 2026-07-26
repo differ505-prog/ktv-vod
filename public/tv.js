@@ -64,6 +64,11 @@ let pendingSongSrc = null; // 解鎖前先把 src 暫存在這邊,等 unlock 後
 function initAudioGraph() {
     if (audioReady) return;
     try {
+      // ===== 暫時 DEBUG: 跳過 Web Audio,直接讓 video 用內建 audio =====
+      audioReady = true;
+      console.log('[音訊] (DEBUG) 跳過 Web Audio graph,讓 video 用內建 audio 播放');
+      return;
+      // ===========================================================
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AudioCtx();
 
