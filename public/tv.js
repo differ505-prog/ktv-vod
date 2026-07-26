@@ -19,6 +19,13 @@
   const qrcodeDiv = document.getElementById('qrcode');
   const qrUrlDiv = document.getElementById('qrUrl');
   const unlockOverlay = document.getElementById('unlockOverlay');
+  const nowPlayingBarTitle = document.getElementById('nowPlayingBarTitle');
+  const nowPlayingBarArtist = document.getElementById('nowPlayingBarArtist');
+
+  // ===== 沉浸模式狀態 =====
+  let immersive = false;          // 是否進入沉浸模式 (CSS class)
+  let nowPlayingFadeTimer = null; // 沉浸模式時,「目前播放 bar」的 fade timer
+  const NOW_PLAYING_FADE_MS = 3000;
 
   // ===== 產生 QR Code =====
   // 內容：http://[伺服器IP]:[Port]/mobile.html
@@ -183,6 +190,11 @@ function initAudioGraph() {
     if (!song || !song.src) return;
     nowPlayingTitle.textContent = song.title;
     nowPlayingArtist.textContent = `${song.artist || ''} · ${song.duration || ''}`;
+    nowPlayingBarTitle.textContent = song.title;
+    nowPlayingBarArtist.textContent = `${song.artist || ''} · ${song.duration || ''}`;
+    // 切到新歌 → 立刻把 bar 顯示回來,重新計 fade
+    document.body.classList.remove('nowPlayingFaded');
+    scheduleNowPlayingFade();
     standbyScreen.style.display = 'none';
 
     // 記住當前 song（含 srcVocalOff），給 change_audio_mode 切換音軌用
@@ -313,4 +325,103 @@ async function unlockAudioPlayback() {
     },
     { once: false }
   );
+
+  // ===== 沉浸模式 (Immersive Mode) =====
+  //
+  // 進入：CSS 把浮層、QR、標題全部 fade 掉,只留 video。
+  //       底部中央留一條「目前播放」bar,3 秒後再 fade,讓 user 確認
+  //       自己在唱哪首。
+  // 退出：CSS 全部還原。
+  //
+  // 「離開後要回到原本的全螢幕」問題的解法：
+  //   - 不靠 user 再點一次 — 透過 `fullscreenchange` event
+  //     監聽瀏覽器原生狀態 (ESC 退出也會觸發)。
+  //   - 若 user 按 ESC 退出瀏覽器 fullscreen,我們就同步退出沉浸模式;
+  //     反之進入沉浸模式時,自動請求瀏覽器 fullscreen。
+  //   - 這樣不論「誰先動」狀態都會一致。
+  //
+  // 為了相容舊版瀏覽器/Tizen,同時監聽 webkit 系前綴。
+
+  function enterImmersive() {
+    if (immersive) return;
+    immersive = true;
+    document.body.classList.add('immersive');
+    scheduleNowPlayingFade();
+    requestFullscreenCompat();
+    console.log('[immersive] 進入沉浸模式');
+  }
+
+  function exitImmersive() {
+    if (!immersive) return;
+    immersive = false;
+    document.body.classList.remove('immersive');
+    document.body.classList.remove('nowPlayingFaded');
+    if (nowPlayingFadeTimer) {
+      clearTimeout(nowPlayingFadeTimer);
+      nowPlayingFadeTimer = null;
+    }
+    // 若還在瀏覽器原生 fullscreen,主動退出 (mobile 觸發退出時)
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document).catch(() => {});
+    }
+    console.log('[immersive] 退出沉浸模式');
+  }
+
+  function scheduleNowPlayingFade() {
+    if (nowPlayingFadeTimer) clearTimeout(nowPlayingFadeTimer);
+    if (!immersive) return;
+    nowPlayingFadeTimer = setTimeout(() => {
+      document.body.classList.add('nowPlayingFaded');
+    }, NOW_PLAYING_FADE_MS);
+  }
+
+  function requestFullscreenCompat() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) {
+      req.call(el).catch((err) => {
+        // user 拒絕 / 沒 gesture → 不影響沉浸模式本身 (CSS 已生效)
+        console.warn('[immersive] 瀏覽器 fullscreen 請求被拒:', err.name);
+      });
+    }
+  }
+
+  // 瀏覽器原生 fullscreen 變動時 → 同步 CSS 沉浸狀態
+  // ESC 退出 / 其他視窗搶走焦點時也會觸發
+  const onFsChange = () => {
+    const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (!inFs && immersive) {
+      immersive = false;
+      document.body.classList.remove('immersive');
+      document.body.classList.remove('nowPlayingFaded');
+      if (nowPlayingFadeTimer) {
+        clearTimeout(nowPlayingFadeTimer);
+        nowPlayingFadeTimer = null;
+      }
+      // 廣播給 server / mobile,讓手機按鈕狀態同步
+      socket.emit('toggle_immersive', { immersive: false });
+      console.log('[immersive] 瀏覽器退出 fullscreen → 同步退出沉浸模式');
+    }
+  };
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+
+  // 接收 mobile 端的切換指令
+  // server.js 用 io.emit(...) 廣播,所有 client 都收得到,這裡只接收自己關心的
+  socket.on('toggle_immersive', ({ immersive: wantImmersive } = {}) => {
+    if (typeof wantImmersive === 'boolean') {
+      wantImmersive ? enterImmersive() : exitImmersive();
+    } else {
+      immersive ? exitImmersive() : enterImmersive();
+    }
+  });
+
+  // 滑鼠動一下 → 立刻把 bar 拉回來 (user 想看哪首就別藏)
+  // 注意：只有沉浸模式下生效,不影響其他 UI
+  document.addEventListener('mousemove', () => {
+    if (!immersive) return;
+    document.body.classList.remove('nowPlayingFaded');
+    scheduleNowPlayingFade();
+  });
 })();

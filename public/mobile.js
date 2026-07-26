@@ -19,6 +19,9 @@
   const npQueue = document.getElementById('npQueue');
   const btnSkip = document.getElementById('btnSkip');
   const btnVocal = document.getElementById('btnVocal');
+  const btnImmersive = document.getElementById('btnImmersive');
+  const immersiveLabel = document.getElementById('immersiveLabel');
+  const immersiveIcon = document.getElementById('immersiveIcon');
   const vocalLabel = document.getElementById('vocalLabel');
   const vocalIcon = document.getElementById('vocalIcon');
   const songList = document.getElementById('songList');
@@ -44,6 +47,7 @@
   let playlist = [];    // 待播佇列
   let currentSong = null;
   let audioMode = 'original';
+  let immersiveMode = false;
 
   // 加歌任務追蹤: jobId → { url, title, artist, status, percent, detail, error }
   const jobs = new Map();
@@ -115,6 +119,13 @@
     renderNowPlaying();
   });
 
+  // TV 沉浸模式狀態回報 (由 tv 端在 fullscreenchange 時同步發出)
+  // 用途：tv user 按 ESC 退出瀏覽器 fullscreen 時,手機按鈕狀態也要更新
+  socket.on('immersive_state', ({ immersive }) => {
+    immersiveMode = !!immersive;
+    renderImmersiveButton();
+  });
+
   socket.on('error_message', ({ message }) => {
     showToast(message || '發生錯誤', 'error');
   });
@@ -145,6 +156,25 @@
   btnVocal.addEventListener('click', () => {
     socket.emit('toggle_vocal');
   });
+
+  // ===== 沉浸模式切換 =====
+  // 注意：server.js 用 io.emit(...) 廣播,tv 端會自己收 'toggle_immersive'。
+  // 此處只發指令 + 自己同步狀態 (避免 tv 端回報延遲,本地按鈕立刻反映)
+  btnImmersive.addEventListener('click', () => {
+    immersiveMode = !immersiveMode;
+    socket.emit('toggle_immersive', { immersive: immersiveMode });
+    renderImmersiveButton();
+  });
+
+  function renderImmersiveButton() {
+    if (immersiveMode) {
+      immersiveLabel.textContent = 'TV 退出全螢幕';
+      immersiveIcon.className = 'fa-solid fa-compress text-xl';
+    } else {
+      immersiveLabel.textContent = 'TV 全螢幕';
+      immersiveIcon.className = 'fa-solid fa-expand text-xl';
+    }
+  }
 
   // ===== 渲染 =====
   function renderAll() {

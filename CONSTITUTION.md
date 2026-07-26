@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-07-26
+最後更新：2026-07-26（新增 §5.1 push + 部署規則）
 
 ---
 
@@ -70,6 +70,43 @@ bash ktv-pipeline/deploy_via_ssh.sh ktv-pipeline
 ```
 - 動 `main.py / alignment.py / test_alignment.py` 進容器，需要重啟 pipeline。
 
-## 5. 不可違反的規則（TBD）
+## 5. 不可違反的規則
+
+### 5.1 每次「優化 / debug 完成」必做兩件事（不可省略）
+
+> 這條規則**已寫入 `git push` hook 與 Cursor rule**，自動觸發、不需要使用者提醒。
+
+1. **`git commit` + `git push`** — 把改動推上 `origin`。
+2. **部署到 NAS**：
+   - 若只改 `public/`、`server.js`、`pipeline_server.js`：
+     ```bash
+     SSHPASS='05050505' rsync -avz \
+       -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+       --checksum \
+       --exclude='.DS_Store' \
+       public/ \
+       vibe@192.168.31.47:/home/vibe/ktv-vod/public/
+     ```
+     （無須重啟容器，user 重整瀏覽器即生效）
+   - 若改 `ktv-pipeline/`：
+     ```bash
+     bash ktv-pipeline/deploy_via_ssh.sh ktv-pipeline
+     ```
+   - 若 `server.js` 有改：ssh 進 NAS 重啟 `ktv-brain` container。
+   - 若失敗：用 `ktv-pipeline/rollback.sh` 回滾。
+
+**例外**（可跳過部署）：
+- 純粹本地測試 / 探索性改動
+- 改的是 `*.md` 文件（文件不需部署）
+
+### 5.3 部署提醒 hook（push 時自動 echo）
+
+`.git/hooks/pre-push` 寫好提醒腳本。第一次 checkout 後需手動啟用一次：
+```bash
+chmod +x .git/hooks/pre-push
+```
+啟用後每次 `git push` 都會在 console 印出部署提示（不阻擋 push，僅提醒）。
+
+### 5.2 其他不可違反規則（TBD）
 
 > 後續歸納：例如「不得在 main 直接 push」「不得繞過 rollback.sh」等。

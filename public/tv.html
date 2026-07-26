@@ -49,6 +49,29 @@
       100% { transform: scale(0.95); opacity: 0.7; }
     }
     .pulse-ring { animation: pulse-ring 2s ease-in-out infinite; }
+
+    /* 沉浸模式:隱藏所有浮層與系統標題,只留 video;
+       nowPlaying 用半透明黑底留在底部中央,3 秒後 fade 掉 */
+    body.immersive .panel,
+    body.immersive .fixed.top-4,
+    body.immersive .fixed.bottom-4,
+    body.immersive #standbyScreen {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    body.immersive .panel,
+    body.immersive .fixed.top-4,
+    body.immersive .fixed.bottom-4 {
+      transition: opacity 0.4s ease;
+    }
+    #nowPlayingBar {
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+    body.immersive.nowPlayingFaded #nowPlayingBar {
+      opacity: 0;
+    }
   </style>
 </head>
 <body class="bg-black">
@@ -85,6 +108,15 @@
     </div>
     <div id="qrcode" class="bg-white p-2 rounded-lg"></div>
     <div id="qrUrl" class="text-[10px] text-gray-400 mt-2 text-center font-mono break-all"></div>
+  </div>
+
+  <!-- 沉浸模式時,底部中央保留「目前播放」bar,3 秒後 fade -->
+  <div id="nowPlayingBar" class="fixed bottom-8 left-1/2 -translate-x-1/2 panel rounded-full px-8 py-3 max-w-2xl text-center shadow-2xl">
+    <div class="flex items-center gap-3 text-base">
+      <i class="fa-solid fa-microphone-lines text-pink-400"></i>
+      <span id="nowPlayingBarTitle" class="font-bold glow-text truncate">等待點歌中...</span>
+      <span id="nowPlayingBarArtist" class="text-gray-300 text-sm"></span>
+    </div>
   </div>
 
   <!-- 中央 loading 提示 (待機畫面) -->

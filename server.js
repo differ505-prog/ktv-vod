@@ -514,6 +514,14 @@ io.on('connection', (socket) => {
     io.emit('change_audio_mode', { audioMode });
   });
 
+  // TV 沉浸模式切換:tv 端收到事件後自己處理 CSS + fullscreen,
+  // 若 tv 被 user 用 ESC 退出瀏覽器 fullscreen,這裡要把狀態廣播給所有
+  // mobile,讓按鈕狀態正確同步。
+  socket.on('toggle_immersive', ({ immersive } = {}) => {
+    log('info', 'TV 沉浸模式', { immersive });
+    io.emit('immersive_state', { immersive: !!immersive });
+  });
+
   socket.on('song_ended', () => {
     log('info', '歌曲播完', { from: socket.id });
     if (currentSong) {
