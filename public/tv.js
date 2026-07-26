@@ -67,6 +67,7 @@ function initAudioGraph() {
       // ===== 暫時 DEBUG: 跳過 Web Audio,直接讓 video 用內建 audio =====
       audioReady = true;
       console.log('[音訊] (DEBUG) 跳過 Web Audio graph,讓 video 用內建 audio 播放');
+      audioCtx = null; // 明確表示沒建立,讓下游呼叫不會炸
       return;
       // ===========================================================
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -117,6 +118,11 @@ function initAudioGraph() {
 
   function applyAudioMode(mode) {
     if (!audioReady) return;
+    // DEBUG bypass: 跳過 Web Audio 時,所有 gain nodes 都是 null
+    if (!leftGainOriginal || !leftGainVocalOff) {
+      audioModeLabel.textContent = mode === 'original' ? '原唱' : '伴奏';
+      return;
+    }
     if (mode === 'original') {
       // 原唱：左→左、右→右
       leftGainOriginal.gain.value = 1.0;
@@ -207,7 +213,7 @@ function initAudioGraph() {
 
     // 不等 canplay — 直接嘗試播。失敗了再說。
     const tryPlay = (reason) => {
-      console.log(`[video] tryPlay() 因為: ${reason}, audioCtx.state=${audioCtx.state}`);
+      console.log(`[video] tryPlay() 因為: ${reason}, audioCtx.state=${audioCtx ? audioCtx.state : 'null'}`);
       const p = video.play();
       if (p && p.catch) {
         p.then(() => console.log('[video] play() 成功 (' + reason + ')'))
@@ -269,7 +275,7 @@ async function unlockAudioPlayback() {
       }
       audioUnlocked = true;
       unlockOverlay.style.display = 'none';
-      console.log('[播放] 已解鎖 audio playback, audioCtx.state=', audioCtx.state);
+      console.log('[播放] 已解鎖 audio playback, audioCtx.state=', audioCtx ? audioCtx.state : 'null');
 
       // 2. 解鎖後,如果有暫存的歌曲,把它真正播下去
       if (pendingSongSrc) {
@@ -280,7 +286,7 @@ async function unlockAudioPlayback() {
         video.src = src;
         video.loop = false;
         video.addEventListener('canplay', () => {
-          console.log('[video] canplay (解鎖後), audioCtx.state=', audioCtx.state);
+          console.log('[video] canplay (解鎖後), audioCtx.state=', audioCtx ? audioCtx.state : 'null');
           const p = video.play();
           if (p && p.catch) {
             p.then(() => console.log('[video] play() 成功 (解鎖後)'))
