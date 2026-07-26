@@ -20,12 +20,13 @@ WORKDIR /app
 RUN groupadd --system --gid 1001 ktv \
   && useradd --system --uid 1001 --gid ktv --no-create-home --shell /usr/sbin/nologin ktv
 
-# 系統工具: ffmpeg + icafelabs (用於額外的影片處理)
+# 系統工具: ffmpeg + gosu (entrypoint 用)+ tini
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        ffmpeg \
        ca-certificates \
        tini \
+       gosu \
   && rm -rf /var/lib/apt/lists/*
 
 # 從 builder 拷貝 node_modules
@@ -38,21 +39,23 @@ COPY --chown=ktv:ktv public ./public
 # 輔助腳本（音訊抽軌等）
 COPY --chown=ktv:ktv scripts ./scripts
 
-# 預留資料目錄 (實際建議 bind mount NAS volume)
-RUN mkdir -p /app/videos /app/ktv-data/processed /app/ktv-data/work \
-  && chown -R ktv:ktv /app/videos /app/ktv-data
+# Entry script:幫忙建立 /ktv-data/_Trash (ktv user 沒權限 mkdir /ktv-data)
+# 用 root 身份 mkdir + chown,server 啟動後才能 rename 進去
+COPY --chown=root:root scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    VIDEO_DIR=/app/videos \
-    VIDEO_URL_PREFIX=/videos
+    VIDEO_DIR=/ktv-data/processed \
+    VIDEO_URL_PREFIX=/videos \
+    TRASH_DIR=/ktv-data/_Trash
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT||3000) + '/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-USER ktv
-
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Entry 必須以 root 跑 (要 chown _Trash),跑完 entrypoint 後切換到 ktv 再 exec node
+# USER 在 entrypoint.sh 內用 gosu 切換
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["node", "server.js"]

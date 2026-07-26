@@ -32,8 +32,11 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
 // ===== 三層防護 = Hard Delete 防呆 (Soft Delete + 密碼 + 不分檔不分伇列) =====
 // TRASH_DIR: 軟刪除把檔案移到這裡,而不是 fs.unlink — 误刪能救回。
 //   - 不直接暴露為 URL prefix (安全考量)
-//   - 預設在 VIDEO_DIR 同層,命名 _Trash (避免被 scanLocalVideos 掃到)
-const TRASH_DIR = process.env.TRASH_DIR || path.join(VIDEO_DIR, '_Trash');
+//   - 預設放 /ktv-data/_Trash (ktv-data volume 內),與 VIDEO_DIR 同層
+//   - 為何不放 VIDEO_DIR 下:container 內 VIDEO_DIR (/ktv-data/processed) 是
+//     root owned,ktv user 無法 mkdir 新子目錄 (會 permission denied)
+//   - Docker entrypoint 會幫忙建立 + chown;若失敗,server 啟動時降級為 warning
+const TRASH_DIR = process.env.TRASH_DIR || '/ktv-data/_Trash';
 // HOST_PIN: 主揪模式密碼 (預設 0000,符合「4 位數」的 直覺慣例)
 //   - 可從 .env 覆寫 (生產環境應該改)
 //   - 注意：這是「用户友善的防護」,不替代真正的存取控管
@@ -124,63 +127,8 @@ function toPublicUrl(src) {
 }
 
 // ===== 歌曲庫載入 =====
-// 策略：
-//   1. 預設內建 SONG_LIBRARY (寫死的測試影片，跨網穩定)
-//   2. 若 VIDEO_DIR 有 .mp4 檔，自動併入歌曲庫 (從檔名解析標題)
-//
-// 注意：SONG_LIBRARY 是「合併」視圖，內建歌曲固定不變；
-// 本機檔案隨 VIDEO_DIR 變化動態合併，因此透過 rebuildLibrary() 即時更新。
-const BUILT_IN_SONGS = [
-  {
-    id: 'song-001',
-    title: 'Big Buck Bunny',
-    artist: 'Blender Foundation',
-    duration: '10:34',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg',
-  },
-  {
-    id: 'song-002',
-    title: 'Elephants Dream',
-    artist: 'Blender Foundation',
-    duration: '10:53',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ElephantsDream.jpg',
-  },
-  {
-    id: 'song-003',
-    title: 'For Bigger Blazes',
-    artist: 'Google',
-    duration: '00:15',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerBlazes.jpg',
-  },
-  {
-    id: 'song-004',
-    title: 'For Bigger Escape',
-    artist: 'Google',
-    duration: '00:15',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerEscapes.jpg',
-  },
-  {
-    id: 'song-005',
-    title: 'For Bigger Fun',
-    artist: 'Google',
-    duration: '01:00',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerFun.jpg',
-  },
-  {
-    id: 'song-006',
-    title: 'For Bigger Joyrides',
-    artist: 'Google',
-    duration: '00:15',
-    src: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
-    cover: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerJoyrides.jpg',
-  },
-];
-
+// 策略:只顯示 VIDEO_DIR 下的 .mp4 檔,從檔名解析標題/歌手
+// 之前有 6 首內建佔位假歌 (Big Buck Bunny 等) 已全部移除。
 function scanLocalVideos() {
   const local = [];
   try {
@@ -219,43 +167,12 @@ function scanLocalVideos() {
   return local;
 }
 
-// ===== 內建歌曲黑名單 (持久化) =====
-// 路徑選擇:不能放 /app (root owned,container user node 無法寫)
-// /ktv-data 是 named volume (ktv user owned),且 ktv-brain container 對它有 rw 權限
-const HIDDEN_BUILTIN_FILE = process.env.BUILT_IN_HIDDEN_FILE
-  || path.join(process.env.VIDEO_DIR || '/ktv-data/processed', '..', 'data', 'built_in_hidden.json');
-let BUILT_IN_HIDDEN = new Set();
-function loadBuiltInHidden() {
-  try {
-    if (fs.existsSync(HIDDEN_BUILTIN_FILE)) {
-      const raw = fs.readFileSync(HIDDEN_BUILTIN_FILE, 'utf8');
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) BUILT_IN_HIDDEN = new Set(arr);
-    }
-  } catch (err) {
-    log('warn', '讀取 built_in_hidden 失敗', { err: err.message });
-  }
-}
-function saveBuiltInHidden() {
-  try {
-    fs.mkdirSync(path.dirname(HIDDEN_BUILTIN_FILE), { recursive: true });
-    fs.writeFileSync(HIDDEN_BUILTIN_FILE, JSON.stringify([...BUILT_IN_HIDDEN], null, 2));
-  } catch (err) {
-    log('warn', '寫入 built_in_hidden 失敗', { err: err.message });
-  }
-}
-loadBuiltInHidden();
-log('info', 'BUILT_IN_HIDDEN 載入', { file: HIDDEN_BUILTIN_FILE, count: BUILT_IN_HIDDEN.size });
-
 function buildSongLibrary() {
-  return [
-    ...BUILT_IN_SONGS.filter((s) => !BUILT_IN_HIDDEN.has(s.id)),
-    ...scanLocalVideos(),
-  ];
+  return scanLocalVideos();
 }
 
 let SONG_LIBRARY = buildSongLibrary();
-log('info', '歌曲庫已載入', { builtIn: BUILT_IN_SONGS.length, local: SONG_LIBRARY.length - BUILT_IN_SONGS.length });
+log('info', '歌曲庫已載入', { count: SONG_LIBRARY.length });
 
 /**
  * 重新掃描 VIDEO_DIR 並比對差異。
@@ -357,7 +274,6 @@ app.post('/api/songs/remove-from-queue', (req, res) => {
  * POST /api/songs/delete
  * Body: { songId: 'song-003', hostPin: '0000' }
  *
- * - 內建歌曲 (BUILT_IN_SONGS) 拒絕刪除,只允許本機歌曲
  * - src / srcVocalOff 都移走 (避免變成「唱原唱時還是舊檔」)
  * - hostPin 錯 → 401 (就算前端藏好,後端也要驗)
  * - 錯誤時的 cleanup: 若只 mv 成功一個檔,另一個還在原位 → 不要讓使用者以為刪乾淨
@@ -376,22 +292,6 @@ app.post('/api/songs/delete', (req, res) => {
   const song = SONG_LIBRARY.find((s) => s.id === songId);
   if (!song) {
     return res.status(404).json({ success: false, error: '找不到這首歌' });
-  }
-
-  // 內建歌曲:不動檔案 (NAS 上根本沒有),改寫入 hidden 黑名單
-  // 之後 rebuildLibrary 會自動過濾,前端透過 socket 看到列表變化
-  if (song.source !== 'local') {
-    BUILT_IN_HIDDEN.add(song.id);
-    saveBuiltInHidden();
-    SONG_LIBRARY = SONG_LIBRARY.filter((s) => s.id !== songId);
-    io.emit('library_updated', { songs: SONG_LIBRARY });
-    log('info', 'hide built-in song', { songId, title: song.title });
-    return res.json({
-      success: true,
-      kind: 'hidden',
-      hiddenId: song.id,
-      message: '內建歌曲已從清單移除 (可從垃圾桶復原)',
-    });
   }
 
   // 計算實體檔案路徑 (src 是 URL,要還原到 VIDEO_DIR 的 basename)
@@ -455,42 +355,24 @@ app.post('/api/songs/delete', (req, res) => {
 
 /**
  * 最後防線: 列出垃圾桶內容,方便「派對誤刪」隔天救回。
- * 同時也列出被隱藏的內建歌曲 (kind: 'hidden') — 兩者用統一介面復原。
- * 不需要 hostPin — 這是唯讀,而且只暴露檔名/標題 (不含路徑/雜湊)。
+ * 不需要 hostPin — 這是唯讀,而且只暴露檔名 (不含路徑/雜湊)。
  */
 app.get('/api/songs/trash', (req, res) => {
   try {
-    const items = [];
-    // 1. 軟刪除的本機檔案 (在 TRASH_DIR 內)
-    if (fs.existsSync(TRASH_DIR)) {
-      fs.readdirSync(TRASH_DIR)
-        .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
-        .forEach((f) => {
-          const stat = fs.statSync(path.join(TRASH_DIR, f));
-          items.push({
-            kind: 'file',
-            fileName: f,
-            title: f,
-            sizeBytes: stat.size,
-            mtime: stat.mtime.toISOString(),
-          });
-        });
+    if (!fs.existsSync(TRASH_DIR)) {
+      return res.json({ success: true, items: [] });
     }
-    // 2. 被隱藏的內建歌曲 (從 BUILT_IN_HIDDEN 集合)
-    BUILT_IN_HIDDEN.forEach((id) => {
-      const song = BUILT_IN_SONGS.find((s) => s.id === id);
-      if (song) {
-        items.push({
-          kind: 'hidden',
-          songId: song.id,
-          title: song.title,
-          artist: song.artist,
-          sizeBytes: 0,
-          mtime: new Date().toISOString(), // 沒真實時間,用「現在」當排序鍵
-        });
-      }
-    });
-    items.sort((a, b) => b.mtime.localeCompare(a.mtime));
+    const items = fs.readdirSync(TRASH_DIR)
+      .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
+      .map((f) => {
+        const stat = fs.statSync(path.join(TRASH_DIR, f));
+        return {
+          fileName: f,
+          sizeBytes: stat.size,
+          mtime: stat.mtime.toISOString(),
+        };
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));   // 最近刪的在最上
     return res.json({ success: true, items });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -500,24 +382,12 @@ app.get('/api/songs/trash', (req, res) => {
 /**
  * 把垃圾桶的檔案復原回 VIDEO_DIR。
  * 復原後會重建 SONG_LIBRARY,會自然納入這首。
- * 若 kind === 'hidden' (內建歌),改從 BUILT_IN_HIDDEN 移除並 rebuild。
  */
 app.post('/api/songs/restore', (req, res) => {
   const fileName = req.body?.fileName;
-  const songId = req.body?.songId;
-  const kind = req.body?.kind || 'file';
   const hostPin = String(req.body?.hostPin ?? '');
   if (hostPin !== HOST_PIN) {
     return res.status(401).json({ success: false, error: '主揪密碼錯誤' });
-  }
-  if (kind === 'hidden') {
-    if (!songId || !BUILT_IN_HIDDEN.has(songId)) {
-      return res.status(404).json({ success: false, error: '黑名單找不到這首內建歌' });
-    }
-    BUILT_IN_HIDDEN.delete(songId);
-    saveBuiltInHidden();
-    try { rebuildLibrary(); } catch (_) {}
-    return res.json({ success: true, kind: 'hidden', songId });
   }
   if (!fileName || !/^[\w.\-\s()（）\[\]【】「」]+$/.test(fileName)) {
     return res.status(400).json({ success: false, error: '檔名不合法' });
