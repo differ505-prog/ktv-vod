@@ -57,6 +57,11 @@ app.use(
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Accept-Ranges', 'bytes');
       }
+      // 寬鬆 CORS：tv.html 同源連線原則上不需要，但 <video crossorigin="anonymous">
+      // 會讓瀏覽器要求 CORS 才能把媒體餵給 MediaElementSource/Web Audio；
+      // 也避免 LAN 內 IP 直連時被擋。
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
   })
 );
