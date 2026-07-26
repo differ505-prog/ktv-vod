@@ -61,22 +61,12 @@ let audioUnlocked = false;
 let pendingFirstPlay = false;
 let pendingSongSrc = null; // 解鎖前先把 src 暫存在這邊,等 unlock 後才真正給 video
 
-// 記住目前正在播的 song（含 srcVocalOff），給 change_audio_mode 切換用
+// 記住目前正在播的 song（保留 srcVocalOff 為診斷用），給 sync 顯示用
 let currentSongRef = null;
-// 切換 src 時的「想跳到哪個時間點」，onloadedmetadata 用
-let pendingSeekTime = null;
-// pendingOnLoaded 用來在每次切換時正確覆蓋舊 listener（{ once:true } 也要手動清掉）
-let pendingOnLoaded = null;
 
 function initAudioGraph() {
     if (audioReady) return;
     try {
-      // ===== 暫時 DEBUG: 跳過 Web Audio,直接讓 video 用內建 audio =====
-      audioReady = true;
-      console.log('[音訊] (DEBUG) 跳過 Web Audio graph,讓 video 用內建 audio 播放');
-      audioCtx = null; // 明確表示沒建立,讓下游呼叫不會炸
-      return;
-      // ===========================================================
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AudioCtx();
 
@@ -124,12 +114,8 @@ function initAudioGraph() {
   }
 
   function applyAudioMode(mode) {
-    if (!audioReady) return;
-    // DEBUG bypass: 跳過 Web Audio 時,所有 gain nodes 都是 null
-    if (!leftGainOriginal || !leftGainVocalOff) {
-      audioModeLabel.textContent = mode === 'original' ? '原唱' : '伴奏';
-      // ===== 雙 mp4 切換（繞過 Web Audio 的真正音訊切換）=====
-      switchVideoSrcForMode(mode);
+    if (!audioReady || !audioCtx) {
+      console.warn('[音訊] applyAudioMode 收到但 audioGraph 還沒建好');
       return;
     }
     if (mode === 'original') {
@@ -138,7 +124,7 @@ function initAudioGraph() {
       rightGainOriginal.gain.value = 1.0;
       leftGainVocalOff.gain.value = 0.0;
       rightGainVocalOff.gain.value = 0.0;
-    } else {
+    } else if (mode === 'vocal_off') {
       // 伴奏：左聲道複製到左右 (等同消除右聲道的人聲)
       leftGainOriginal.gain.value = 0.0;
       rightGainOriginal.gain.value = 0.0;
@@ -146,69 +132,7 @@ function initAudioGraph() {
       rightGainVocalOff.gain.value = 0.0;
     }
     audioModeLabel.textContent = mode === 'original' ? '原唱' : '伴奏';
-  }
-
-  // 依音訊模式切換 <video> 的 src。
-  // 工作原理：歌曲若同時有 srcVocalOff，就把 video.src 換到對應的 mp4，
-  // 並用 onloadedmetadata 把 currentTime 同步回去 → 切換近乎無縫。
-  // 注意：只在 Web Audio graph 未啟用（即 DEBUG 模式）時才呼叫。
-  function switchVideoSrcForMode(mode) {
-    if (!currentSongRef) {
-      console.log('[音訊切換] 沒有 currentSongRef，跳過');
-      return;
-    }
-    const desired = mode === 'vocal_off'
-      ? currentSongRef.srcVocalOff
-      : currentSongRef.src;
-    if (!desired) {
-      console.warn('[音訊切換] 此曲無對應音軌檔，跳過（currentSongRef.srcVocalOff =', currentSongRef.srcVocalOff, '）');
-      return;
-    }
-    if (video.src && video.src.endsWith(desired.split('/').pop())) {
-      console.log('[音訊切換] src 已是目標，不重複切換');
-      return;
-    }
-    const wasPlaying = !video.paused;
-    const seekTo = video.currentTime || 0;
-    console.log(`[音訊切換] ${mode} → ${desired}, currentTime=${seekTo.toFixed(2)}, playing=${wasPlaying}`);
-
-    // vocal_off mp4 的音訊在 pan filter 重新編碼後，首 frame 會比視訊晚一點點
-    // （即使 ffmpeg 已用 first_pts=0，瀏覽器解碼器仍會有 ~80ms 的初始化延遲），
-    // 因此切到 vocal_off 時把 currentTime 往前推一點，讓字幕追上音樂。
-    // 切回 original 則反向扣回，避免再次偏移。
-    const AUDIO_MODE_DELAY_MS = 80; // 毫秒，empirical 值；若仍不對請報給我調
-    let effectiveSeek = seekTo;
-    if (mode === 'vocal_off') {
-      effectiveSeek = Math.max(0, seekTo + AUDIO_MODE_DELAY_MS / 1000);
-    } else if (mode === 'original') {
-      effectiveSeek = Math.max(0, seekTo - AUDIO_MODE_DELAY_MS / 1000);
-    }
-
-    pendingSeekTime = effectiveSeek;
-    video.src = desired;
-    video.loop = false;
-
-    const onReady = () => {
-      // loadedmetadata 之後設 currentTime，然後嘗試繼續播放
-      try {
-        if (pendingSeekTime != null) {
-          // 兩支 mp4 duration 會差一點點，避免越界
-          const target = Math.min(pendingSeekTime, Math.max(0, (video.duration || seekTo) - 0.1));
-          video.currentTime = target;
-        }
-      } catch (e) {
-        console.warn('[音訊切換] 設 currentTime 失敗：', e.message);
-      }
-      if (wasPlaying) {
-        const p = video.play();
-        if (p && p.catch) {
-          p.catch((err) => console.warn('[音訊切換] play() 失敗：', err.message));
-        }
-      }
-    };
-    video.removeEventListener('loadedmetadata', pendingOnLoaded);
-    pendingOnLoaded = onReady;
-    video.addEventListener('loadedmetadata', onReady, { once: true });
+    console.log('[音訊] mode =', mode, '(Web Audio gain 切換完成，src 不動 → 無字幕偏移)');
   }
 
   // ===== Socket.io 連線 =====
