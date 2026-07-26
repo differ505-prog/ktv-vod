@@ -304,7 +304,11 @@
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || '刪除失敗');
-      showToast(`🗑️ 已移到垃圾桶: ${data.moved?.join(', ') || ''}`, 'success');
+      if (data.kind === 'hidden') {
+        showToast(`🫥 已從清單隱藏: ${deleteSongTitle.textContent || data.hiddenId} (可從垃圾桶復原)`, 'success');
+      } else {
+        showToast(`🗑️ 已移到垃圾桶: ${data.moved?.join(', ') || ''}`, 'success');
+      }
       deleteModal.classList.add('hidden');
       pendingDeleteSongId = null;
       // 廣播 library_updated 由 server 處理,前端會透過 socket 自動收到
@@ -341,14 +345,20 @@
     items.forEach((it) => {
       const li = document.createElement('div');
       li.className = 'glass rounded-xl p-3 flex items-center gap-3';
-      const sizeStr = it.sizeBytes > 1024 * 1024
-        ? `${(it.sizeBytes / 1024 / 1024).toFixed(1)} MB`
-        : `${(it.sizeBytes / 1024).toFixed(1)} KB`;
+      const isHidden = it.kind === 'hidden';
+      const sizeStr = isHidden
+        ? '內建 (已隱藏)'
+        : (it.sizeBytes > 1024 * 1024
+            ? `${(it.sizeBytes / 1024 / 1024).toFixed(1)} MB`
+            : `${(it.sizeBytes / 1024).toFixed(1)} KB`);
       const dt = new Date(it.mtime);
       const dtStr = `${dt.getMonth() + 1}/${dt.getDate()} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      const mainLabel = isHidden
+        ? `${escapeHtml(it.title)}${it.artist ? ' · ' + escapeHtml(it.artist) : ''}`
+        : escapeHtml(it.fileName);
       li.innerHTML = `
         <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium truncate">${escapeHtml(it.fileName)}</div>
+          <div class="text-sm font-medium truncate">${mainLabel}</div>
           <div class="text-[10px] text-gray-500 mt-0.5">${dtStr} · ${sizeStr}</div>
         </div>
         <button class="restore-btn px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center gap-1 flex-shrink-0">
@@ -361,14 +371,17 @@
         li.querySelector('.restore-btn').disabled = true;
         li.querySelector('.restore-btn').innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
         try {
+          const body = isHidden
+            ? { kind: 'hidden', songId: it.songId, hostPin: pin }
+            : { fileName: it.fileName, hostPin: pin };
           const res = await fetch('/api/songs/restore', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileName: it.fileName, hostPin: pin }),
+            body: JSON.stringify(body),
           });
           const data = await res.json();
           if (!data.success) throw new Error(data.error || '復原失敗');
-          showToast(`✅ 已復原: ${it.fileName}`, 'success');
+          showToast(`✅ 已復原: ${mainLabel}`, 'success');
           // server 會自動 rebuildLibrary,前端透過 socket 收到 library_updated
           // 我們也手動 close + 重 fetch:
           openTrashModal();

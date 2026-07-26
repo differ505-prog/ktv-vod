@@ -219,8 +219,35 @@ function scanLocalVideos() {
   return local;
 }
 
+// ===== 內建歌曲黑名單 (持久化) =====
+const HIDDEN_BUILTIN_FILE = path.join(__dirname, 'data', 'built_in_hidden.json');
+let BUILT_IN_HIDDEN = new Set();
+function loadBuiltInHidden() {
+  try {
+    if (fs.existsSync(HIDDEN_BUILTIN_FILE)) {
+      const raw = fs.readFileSync(HIDDEN_BUILTIN_FILE, 'utf8');
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) BUILT_IN_HIDDEN = new Set(arr);
+    }
+  } catch (err) {
+    log('warn', '讀取 built_in_hidden 失敗', { err: err.message });
+  }
+}
+function saveBuiltInHidden() {
+  try {
+    fs.mkdirSync(path.dirname(HIDDEN_BUILTIN_FILE), { recursive: true });
+    fs.writeFileSync(HIDDEN_BUILTIN_FILE, JSON.stringify([...BUILT_IN_HIDDEN], null, 2));
+  } catch (err) {
+    log('warn', '寫入 built_in_hidden 失敗', { err: err.message });
+  }
+}
+loadBuiltInHidden();
+
 function buildSongLibrary() {
-  return [...BUILT_IN_SONGS, ...scanLocalVideos()];
+  return [
+    ...BUILT_IN_SONGS.filter((s) => !BUILT_IN_HIDDEN.has(s.id)),
+    ...scanLocalVideos(),
+  ];
 }
 
 let SONG_LIBRARY = buildSongLibrary();
@@ -346,9 +373,21 @@ app.post('/api/songs/delete', (req, res) => {
   if (!song) {
     return res.status(404).json({ success: false, error: '找不到這首歌' });
   }
+
+  // 內建歌曲:不動檔案 (NAS 上根本沒有),改寫入 hidden 黑名單
+  // 之後 rebuildLibrary 會自動過濾,前端透過 socket 看到列表變化
   if (song.source !== 'local') {
-    // 內建歌曲 (Big Buck Bunny 等) 拒絕刪除 — 範例歌曲是基礎建設
-    return res.status(403).json({ success: false, error: '內建歌曲無法刪除 (只能刪本機歌曲)' });
+    BUILT_IN_HIDDEN.add(song.id);
+    saveBuiltInHidden();
+    SONG_LIBRARY = SONG_LIBRARY.filter((s) => s.id !== songId);
+    io.emit('library_updated', { songs: SONG_LIBRARY });
+    log('info', 'hide built-in song', { songId, title: song.title });
+    return res.json({
+      success: true,
+      kind: 'hidden',
+      hiddenId: song.id,
+      message: '內建歌曲已從清單移除 (可從垃圾桶復原)',
+    });
   }
 
   // 計算實體檔案路徑 (src 是 URL,要還原到 VIDEO_DIR 的 basename)
@@ -412,24 +451,42 @@ app.post('/api/songs/delete', (req, res) => {
 
 /**
  * 最後防線: 列出垃圾桶內容,方便「派對誤刪」隔天救回。
- * 不需要 hostPin — 這是唯讀,而且只暴露檔名 (不含路徑/雜湊)。
+ * 同時也列出被隱藏的內建歌曲 (kind: 'hidden') — 兩者用統一介面復原。
+ * 不需要 hostPin — 這是唯讀,而且只暴露檔名/標題 (不含路徑/雜湊)。
  */
 app.get('/api/songs/trash', (req, res) => {
   try {
-    if (!fs.existsSync(TRASH_DIR)) {
-      return res.json({ success: true, items: [] });
+    const items = [];
+    // 1. 軟刪除的本機檔案 (在 TRASH_DIR 內)
+    if (fs.existsSync(TRASH_DIR)) {
+      fs.readdirSync(TRASH_DIR)
+        .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
+        .forEach((f) => {
+          const stat = fs.statSync(path.join(TRASH_DIR, f));
+          items.push({
+            kind: 'file',
+            fileName: f,
+            title: f,
+            sizeBytes: stat.size,
+            mtime: stat.mtime.toISOString(),
+          });
+        });
     }
-    const items = fs.readdirSync(TRASH_DIR)
-      .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
-      .map((f) => {
-        const stat = fs.statSync(path.join(TRASH_DIR, f));
-        return {
-          fileName: f,
-          sizeBytes: stat.size,
-          mtime: stat.mtime.toISOString(),
-        };
-      })
-      .sort((a, b) => b.mtime.localeCompare(a.mtime));   // 最近刪的在最上
+    // 2. 被隱藏的內建歌曲 (從 BUILT_IN_HIDDEN 集合)
+    BUILT_IN_HIDDEN.forEach((id) => {
+      const song = BUILT_IN_SONGS.find((s) => s.id === id);
+      if (song) {
+        items.push({
+          kind: 'hidden',
+          songId: song.id,
+          title: song.title,
+          artist: song.artist,
+          sizeBytes: 0,
+          mtime: new Date().toISOString(), // 沒真實時間,用「現在」當排序鍵
+        });
+      }
+    });
+    items.sort((a, b) => b.mtime.localeCompare(a.mtime));
     return res.json({ success: true, items });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -439,12 +496,24 @@ app.get('/api/songs/trash', (req, res) => {
 /**
  * 把垃圾桶的檔案復原回 VIDEO_DIR。
  * 復原後會重建 SONG_LIBRARY,會自然納入這首。
+ * 若 kind === 'hidden' (內建歌),改從 BUILT_IN_HIDDEN 移除並 rebuild。
  */
 app.post('/api/songs/restore', (req, res) => {
   const fileName = req.body?.fileName;
+  const songId = req.body?.songId;
+  const kind = req.body?.kind || 'file';
   const hostPin = String(req.body?.hostPin ?? '');
   if (hostPin !== HOST_PIN) {
     return res.status(401).json({ success: false, error: '主揪密碼錯誤' });
+  }
+  if (kind === 'hidden') {
+    if (!songId || !BUILT_IN_HIDDEN.has(songId)) {
+      return res.status(404).json({ success: false, error: '黑名單找不到這首內建歌' });
+    }
+    BUILT_IN_HIDDEN.delete(songId);
+    saveBuiltInHidden();
+    try { rebuildLibrary(); } catch (_) {}
+    return res.json({ success: true, kind: 'hidden', songId });
   }
   if (!fileName || !/^[\w.\-\s()（）\[\]【】「」]+$/.test(fileName)) {
     return res.status(400).json({ success: false, error: '檔名不合法' });
