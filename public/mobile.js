@@ -20,6 +20,7 @@
   const btnSkip = document.getElementById('btnSkip');
   const btnVocal = document.getElementById('btnVocal');
   const btnImmersive = document.getElementById('btnImmersive');
+  const btnShowQr = document.getElementById('btnShowQr');
   const immersiveLabel = document.getElementById('immersiveLabel');
   const immersiveIcon = document.getElementById('immersiveIcon');
   const vocalLabel = document.getElementById('vocalLabel');
@@ -164,6 +165,13 @@
     immersiveMode = !immersiveMode;
     socket.emit('toggle_immersive', { immersive: immersiveMode });
     renderImmersiveButton();
+  });
+
+  // ===== 邀請朋友 (顯示 QR 15 秒) =====
+  // 新朋友剛進包廂時,主揪按一下 → 電視上的 QR 浮現 15 秒,讓朋友掃
+  btnShowQr.addEventListener('click', () => {
+    socket.emit('show_qr', { durationMs: 15000 });
+    showToast('📺 TV 已顯示 QR Code 15 秒', 'info');
   });
 
   function renderImmersiveButton() {

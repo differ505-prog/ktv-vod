@@ -176,16 +176,20 @@
 
     <!-- 控制面板 -->
     <section class="px-4 mt-4">
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-3 gap-3">
         <button id="btnSkip" class="pink-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
           <i class="fa-solid fa-forward text-xl"></i>
           <span class="text-sm font-bold">切歌</span>
         </button>
         <button id="btnVocal" class="purple-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
           <i id="vocalIcon" class="fa-solid fa-microphone-lines text-xl"></i>
-          <span id="vocalLabel" class="text-sm font-bold">原唱 / 伴奏</span>
+          <span id="vocalLabel" class="text-sm font-bold">原唱</span>
         </button>
-        <button id="btnImmersive" class="cyan-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition col-span-2">
+        <button id="btnShowQr" class="cyan-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition" title="讓電視顯示 QR Code 給朋友掃描">
+          <i class="fa-solid fa-qrcode text-xl"></i>
+          <span class="text-sm font-bold">邀請朋友</span>
+        </button>
+        <button id="btnImmersive" class="cyan-btn rounded-2xl p-4 flex flex-col items-center justify-center gap-1 active:scale-95 transition col-span-3">
           <i id="immersiveIcon" class="fa-solid fa-expand text-xl"></i>
           <span id="immersiveLabel" class="text-sm font-bold">TV 全螢幕</span>
         </button>

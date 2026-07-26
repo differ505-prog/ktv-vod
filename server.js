@@ -482,6 +482,13 @@ io.on('connection', (socket) => {
     playlist.push(queuedSong);
     log('info', '加入佇列', { title: queuedSong.title, by: queuedSong.addedBy });
 
+    // 自動喚醒 B: 廣播「有人點歌」給 TV,TV 顯示「已點播：xxx」toast 5 秒
+    io.emit('song_added', {
+      title: queuedSong.title,
+      artist: queuedSong.artist,
+      addedBy: queuedSong.addedBy,
+    });
+
     if (!currentSong) {
       advanceToNextSong();
     } else {
@@ -523,6 +530,15 @@ io.on('connection', (socket) => {
     // 用 io.emit 而非 socket.emit,確保 tv 自己也收到 (若 mobile 先觸發)
     io.emit('toggle_immersive', { immersive: !!immersive });
     io.emit('immersive_state', { immersive: !!immersive });
+  });
+
+  // 手動喚醒 (邀請朋友): mobile 按「邀請朋友」按鈕
+  // → server 廣播 'show_qr' 給所有 client (含 tv 自己)
+  // → tv 收到後叫醒 QR Panel 15 秒
+  socket.on('show_qr', ({ durationMs } = {}) => {
+    const ms = Math.min(60000, Math.max(3000, Number(durationMs) || 15000));
+    log('info', 'TV 顯示 QR', { durationMs: ms });
+    io.emit('show_qr', { durationMs: ms });
   });
 
   socket.on('song_ended', () => {

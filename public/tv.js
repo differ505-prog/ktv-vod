@@ -27,11 +27,11 @@
   const immersiveDialog = document.getElementById('immersiveDialog');
   const immersiveDialogConfirm = document.getElementById('immersiveDialogConfirm');
   const immersiveDialogCancel = document.getElementById('immersiveDialogCancel');
+  const songAddedToast = document.getElementById('songAddedToast');
+  const songAddedToastTitle = document.getElementById('songAddedToastTitle');
 
   // ===== 沉浸模式狀態 =====
   let immersive = false;          // 是否進入沉浸模式 (CSS class)
-  let nowPlayingFadeTimer = null; // 沉浸模式時,「目前播放 bar」的 fade timer
-  const NOW_PLAYING_FADE_MS = 3000;
   // Mobile 發請求時,server 會廣播 toggle_immersive 給所有 client (含 tv 自己回報的)。
   // 為了避免 tv 自己的回報被當成「新請求」再彈 dialog,這個 flag 用來辨識「來源是誰」。
   let lastImmersiveBroadcastImmersive = null;
@@ -195,15 +195,30 @@ function initAudioGraph() {
     applyAudioMode(audioMode);
   });
 
+  // 自動喚醒 B: 有人點歌 → 頂部中央顯示「已點播：xxx」5 秒
+  // (來自 server 的 broadcast,server 會在 add_song 成功後發給所有 client)
+  socket.on('song_added', ({ title, addedBy } = {}) => {
+    console.log('[Socket] 有人點歌：', title, 'by', addedBy);
+    const label = addedBy ? `${title}（${addedBy}）` : title;
+    showSongAddedToast(label || '新點播');
+  });
+
+  // 手動喚醒 (邀請朋友): 手機端按「顯示 QR」→ server 廣播給 tv
+  // tv 端 QR Panel 強制顯示 15 秒
+  socket.on('show_qr', ({ durationMs } = {}) => {
+    console.log('[Socket] 邀請朋友 → 顯示 QR');
+    wakeUI('qrCode', durationMs || SMART_FADE.qrCode);
+  });
+
   function playSong(song) {
     if (!song || !song.src) return;
     nowPlayingTitle.textContent = song.title;
     nowPlayingArtist.textContent = `${song.artist || ''} · ${song.duration || ''}`;
     nowPlayingBarTitle.textContent = song.title;
     nowPlayingBarArtist.textContent = `${song.artist || ''} · ${song.duration || ''}`;
-    // 切到新歌 → 立刻把 bar 顯示回來,重新計 fade
-    document.body.classList.remove('nowPlayingFaded');
-    scheduleNowPlayingFade();
+    // 自動喚醒 A: 切到新歌 → 立刻顯示 nowPlaying UI 8 秒
+    // (沉浸模式時會用 .ui-shown 蓋掉隱藏)
+    wakeUI('nowPlaying', SMART_FADE.nowPlaying);
     standbyScreen.style.display = 'none';
 
     // 記住當前 song（含 srcVocalOff），給 change_audio_mode 切換音軌用
@@ -335,27 +350,160 @@ async function unlockAudioPlayback() {
     { once: false }
   );
 
-  // ===== 沉浸模式 (Immersive Mode) =====
-  //
-  // 進入：CSS 把浮層、QR、標題全部 fade 掉,只留 video。
-  //       底部中央留一條「目前播放」bar,3 秒後再 fade,讓 user 確認
-  //       自己在唱哪首。
-  // 退出：CSS 全部還原。
-  //
-  // 「離開後要回到原本的全螢幕」問題的解法：
-  //   - 不靠 user 再點一次 — 透過 `fullscreenchange` event
-  //     監聽瀏覽器原生狀態 (ESC 退出也會觸發)。
-  //   - 若 user 按 ESC 退出瀏覽器 fullscreen,我們就同步退出沉浸模式;
-  //     反之進入沉浸模式時,自動請求瀏覽器 fullscreen。
-  //   - 這樣不論「誰先動」狀態都會一致。
-  //
-  // 為了相容舊版瀏覽器/Tizen,同時監聽 webkit 系前綴。
+  // ===== 智慧淡入淡出 (The Smart Fade) =====
+  // 設計理念: 不該讓 UI「永遠消失」或「永遠常駐」,而是「需要時才出現」。
+  // 預設狀態: 全部淡入 (首次載入 / 待機時)
+  // 7-10 秒後: 自動淡出右上的「現在播放」和右下的 QR Code
+  // 喚醒時機:
+  //   - 新歌開播 (play_song) → 顯示 nowPlaying 8 秒
+  //   - 有人點歌 (add_song) → 顯示頂部 toast 5 秒
+  //   - 邀請朋友 (mobile 按鈕) → 顯示 QR 15 秒
+  //   - 滑鼠動 (mousemove) → 喚醒 5 秒
+  const SMART_FADE = {
+    nowPlaying: 8000,  // ms — 顯示「現在播放」(右上+底部) 多久
+    qrCode: 15000,     // ms — 顯示 QR 多久
+    toast: 5000,       // ms — 「已點播：xxx」toast 多久
+    mouse: 5000,       // ms — 滑鼠喚醒後,所有 UI 留多久
+  };
+
+  // 給每個區塊獨立的 fadeTimer,以確保「叫醒 A 不會打斷 B 的計時」
+  const fadeTimers = {
+    nowPlaying: null,
+    qrCode: null,
+    toast: null,
+    mouse: null,
+  };
+
+  // 「某區塊是否應該可見」 — 這是商業邏輯層,UI 狀態由 CSS 來表達。
+  // 我們用「shouldShowXxx」變數追蹤「誰希望它可見」,而非「CSS 屬於什麼狀態」。
+  // 然後 renderUI() 會把所有 shouldShow 與 immersive 結合,決定 CSS class。
+  const shouldShow = {
+    nowPlaying: true,    // 預設可見
+    qrCode: true,        // 預設可見
+  };
+
+  /**
+   * 叫醒某區塊 N 毫秒, 然後自動淡出。
+   * 重複呼叫會重設計時 (不會把 UI 關掉重開)。
+   */
+  function wakeUI(zone, ms) {
+    // 1. 設定該區塊「應該可見」
+    if (zone === 'nowPlaying') shouldShow.nowPlaying = true;
+    if (zone === 'qrCode') shouldShow.qrCode = true;
+    renderUI();
+
+    // 2. 重設 / 啟動 fade timer
+    if (fadeTimers[zone]) clearTimeout(fadeTimers[zone]);
+    fadeTimers[zone] = setTimeout(() => {
+      if (zone === 'nowPlaying') shouldShow.nowPlaying = false;
+      if (zone === 'qrCode') shouldShow.qrCode = false;
+      renderUI();
+      fadeTimers[zone] = null;
+    }, ms);
+  }
+
+  /**
+   * 顯示「已點播：xxx」toast (頂部中央) — 獨立於其他 fade 邏輯。
+   * 重複呼叫會 reset 計時。
+   */
+  function showSongAddedToast(title) {
+    songAddedToastTitle.textContent = title || '—';
+    songAddedToast.classList.add('show');
+    if (fadeTimers.toast) clearTimeout(fadeTimers.toast);
+    fadeTimers.toast = setTimeout(() => {
+      songAddedToast.classList.remove('show');
+      fadeTimers.toast = null;
+    }, SMART_FADE.toast);
+  }
+
+  /**
+   * 渲染 UI 狀態 — 把 shouldShow + immersive 轉成 CSS class。
+   * 「非沉浸模式」: shouldShow=true → 顯示, false → .ui-faded
+   * 「沉浸模式」:   .ui-shown 表示「強迫在沉浸模式內顯示」
+   *                沒 .ui-shown 就會被 body.immersive 規則隱藏
+   */
+  function renderUI() {
+    // (a) nowPlaying — 右上 panel + 底部 bar
+    if (immersive) {
+      // 沉浸模式中,只在「主動叫醒」時顯示 (例如 play_song)
+      setZoneClass('nowPlaying', shouldShow.nowPlaying, /*showInImmersive=*/true);
+    } else {
+      setZoneClass('nowPlaying', shouldShow.nowPlaying, /*showInImmersive=*/false);
+    }
+
+    // (b) qrCode — 右下 QR 面板
+    if (immersive) {
+      // 沉浸模式中,只在「主動叫醒」時顯示 (例如 「邀請朋友」)
+      setZoneClass('qrCode', shouldShow.qrCode, /*showInImmersive=*/true);
+    } else {
+      setZoneClass('qrCode', shouldShow.qrCode, /*showInImmersive=*/false);
+    }
+  }
+
+  /**
+   * 設置某區塊的 CSS class。
+   * - isVisible + 非沉浸: 移除 ui-faded
+   * - !isVisible + 非沉浸: 加上 ui-faded (預設顯示,被淡出)
+   * - isVisible + 沉浸: 加上 ui-shown (覆寫 immersive 規則)
+   * - !isVisible + 沉浸: 移除 ui-shown (讓 immersive 預設隱藏發揮作用)
+   */
+  function setZoneClass(zone, isVisible, showInImmersive) {
+    const panelIds = {
+      nowPlaying: ['nowPlayingPanel', 'nowPlayingBar'],
+      qrCode: ['qrPanel'],
+    };
+    const ids = panelIds[zone] || [];
+    ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (showInImmersive) {
+        // 沉浸模式
+        if (isVisible) {
+          el.classList.remove('ui-faded');
+          el.classList.add('ui-shown');
+        } else {
+          el.classList.remove('ui-shown');
+        }
+      } else {
+        // 非沉浸模式
+        if (isVisible) {
+          el.classList.remove('ui-faded');
+        } else {
+          el.classList.add('ui-faded');
+        }
+      }
+    });
+  }
+
+  // 滑鼠動一下 → 叫醒 UI 5 秒
+  // (任何狀態都會觸發,連待機時也會)
+  document.addEventListener('mousemove', () => {
+    wakeUI('nowPlaying', SMART_FADE.mouse);
+    wakeUI('qrCode', SMART_FADE.mouse);
+  });
+
+  // 啟動時: 預設 8 秒後淡出 nowPlaying,讓畫面進入「純淨 MV」狀態
+  // (這個 timer 會在首次 play_song 時被重設,所以不會跟實際播放時間衝突)
+  setTimeout(() => {
+    if (!currentSongRef) {
+      // 還沒在播 → 全部淡出 (待機也要乾淨)
+      shouldShow.nowPlaying = false;
+      shouldShow.qrCode = false;
+      renderUI();
+    }
+  }, SMART_FADE.nowPlaying);
+
+
 
   function enterImmersive() {
     if (immersive) return;
     immersive = true;
     document.body.classList.add('immersive');
-    scheduleNowPlayingFade();
+    // 進入沉浸模式: 立刻把所有可浮動的 UI 縮到「不主動顯示」狀態。
+    // SmartFade 會用 .ui-shown 來在沉浸模式內臨時叫醒。
+    shouldShow.nowPlaying = false;
+    shouldShow.qrCode = false;
+    renderUI();
     requestFullscreenCompat();
     // 廣播給 server/mobile (server 會再 io.emit 回來給 tv,但因為值 == immersive
     // 會被 toggle_immersive handler 忽略)
@@ -367,11 +515,8 @@ async function unlockAudioPlayback() {
     if (!immersive) return;
     immersive = false;
     document.body.classList.remove('immersive');
-    document.body.classList.remove('nowPlayingFaded');
-    if (nowPlayingFadeTimer) {
-      clearTimeout(nowPlayingFadeTimer);
-      nowPlayingFadeTimer = null;
-    }
+    // 退出時主動讓 UI 重新可見一段時間,讓 user 確認現在在播什麼
+    wakeUI('nowPlaying', SMART_FADE.nowPlaying);
     // 若還在瀏覽器原生 fullscreen,主動退出 (mobile 觸發退出時)
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
@@ -380,14 +525,6 @@ async function unlockAudioPlayback() {
     // 廣播給 server/mobile
     socket.emit('toggle_immersive', { immersive: false });
     console.log('[immersive] 退出沉浸模式');
-  }
-
-  function scheduleNowPlayingFade() {
-    if (nowPlayingFadeTimer) clearTimeout(nowPlayingFadeTimer);
-    if (!immersive) return;
-    nowPlayingFadeTimer = setTimeout(() => {
-      document.body.classList.add('nowPlayingFaded');
-    }, NOW_PLAYING_FADE_MS);
   }
 
   function requestFullscreenCompat() {
@@ -408,11 +545,7 @@ async function unlockAudioPlayback() {
     if (!inFs && immersive) {
       immersive = false;
       document.body.classList.remove('immersive');
-      document.body.classList.remove('nowPlayingFaded');
-      if (nowPlayingFadeTimer) {
-        clearTimeout(nowPlayingFadeTimer);
-        nowPlayingFadeTimer = null;
-      }
+      wakeUI('nowPlaying', SMART_FADE.nowPlaying);
       // 廣播給 server / mobile,讓手機按鈕狀態同步
       socket.emit('toggle_immersive', { immersive: false });
       console.log('[immersive] 瀏覽器退出 fullscreen → 同步退出沉浸模式');
@@ -500,11 +633,6 @@ async function unlockAudioPlayback() {
     }
   });
 
-  // 滑鼠動一下 → 立刻把 bar 拉回來 (user 想看哪首就別藏)
-  // 注意：只有沉浸模式下生效,不影響其他 UI
-  document.addEventListener('mousemove', () => {
-    if (!immersive) return;
-    document.body.classList.remove('nowPlayingFaded');
-    scheduleNowPlayingFade();
-  });
+  // 滑鼠喚醒在 SmartFade 模組內已統一處理 (覆蓋沉浸 + 非沉浸)。
+  // 舊的沉浸專屬邏輯已刪除,因為 SmartFade 模組會自動處理兩種狀態。
 })();

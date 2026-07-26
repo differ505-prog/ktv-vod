@@ -50,27 +50,55 @@
     }
     .pulse-ring { animation: pulse-ring 2s ease-in-out infinite; }
 
-    /* 沉浸模式:隱藏所有浮層與系統標題,只留 video;
-       nowPlaying 用半透明黑底留在底部中央,3 秒後 fade 掉 */
-    body.immersive .panel,
-    body.immersive .fixed.top-4,
-    body.immersive .fixed.bottom-4,
-    body.immersive #standbyScreen {
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.4s ease;
-    }
-    body.immersive .panel,
-    body.immersive .fixed.top-4,
-    body.immersive .fixed.bottom-4 {
-      transition: opacity 0.4s ease;
-    }
+    /* ===== UI 元素淡入淡出 (The Smart Fade) =====
+       預設為可見 (opacity:1) — 這是「待機/待機 / 待機」狀態。
+       JS 透過 .ui-faded class 觸發淡出。
+       注意: 系統標題 (左上) 和 immersiveBtn (左下) 是「控制項」,
+       從不淡出,保持可達性。 */
+    #nowPlayingPanel,
+    #qrPanel,
     #nowPlayingBar {
-      opacity: 1;
       transition: opacity 0.6s ease;
     }
-    body.immersive.nowPlayingFaded #nowPlayingBar {
+    #nowPlayingPanel.ui-faded,
+    #qrPanel.ui-faded,
+    #nowPlayingBar.ui-faded {
       opacity: 0;
+      pointer-events: none;
+    }
+
+    /* 沉浸模式 (immersive): 預設就全部隱藏。但有 CSS animation 「叫醒」時,
+       JS 會用 .ui-shown 強制把元素縮回來 (opacity:1) —
+       聲音設計: 沉浸模式是由 tv 端的「全螢幕」按鈕 / mobile 端「TV 全螢幕」觸發的,
+       入場即表示「进入無干擾狀態」,所以預設 fade。
+       但手機端「顯示 QR」依然要能叫醒 QR。 */
+    body.immersive #nowPlayingPanel,
+    body.immersive #qrPanel,
+    body.immersive #nowPlayingBar {
+      opacity: 0;
+      pointer-events: none;
+    }
+    body.immersive #nowPlayingPanel.ui-shown,
+    body.immersive #qrPanel.ui-shown,
+    body.immersive #nowPlayingBar.ui-shown {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* 「已點播：xxx」toast (頂部中央) — 默認隐藏, 加上 .show 才顯示 */
+    #songAddedToast {
+      position: fixed;
+      top: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(-30px);
+      opacity: 0;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      pointer-events: none;
+      z-index: 25;
+    }
+    #songAddedToast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
   </style>
 </head>
@@ -80,7 +108,7 @@
   <video id="player" playsinline preload="auto"></video>
 
   <!-- 右上角：當前播放資訊 -->
-  <div class="fixed top-4 right-4 panel rounded-xl px-5 py-3 max-w-md shadow-2xl">
+  <div id="nowPlayingPanel" class="fixed top-4 right-4 panel rounded-xl px-5 py-3 max-w-md shadow-2xl">
     <div class="flex items-center gap-2 text-pink-400 text-xs font-bold tracking-widest mb-1">
       <i class="fa-solid fa-microphone-lines"></i>
       <span>目前播放</span>
@@ -93,7 +121,7 @@
     </div>
   </div>
 
-  <!-- 左上角：系統標題 -->
+  <!-- 左上角：系統標題 (常駐, 不淡出) -->
   <div class="fixed top-4 left-4 panel rounded-xl px-4 py-2 flex items-center gap-3">
     <div class="pulse-ring w-3 h-3 rounded-full bg-pink-500"></div>
     <span class="font-bold tracking-wider">
@@ -101,8 +129,8 @@
     </span>
   </div>
 
-  <!-- 右下角：QR Code (手機遙控) -->
-  <div class="fixed bottom-4 right-4 panel rounded-2xl p-4 shadow-2xl">
+  <!-- 右下角：QR Code (手機遙控) — 可由 mobile 請求叫醒 15 秒 -->
+  <div id="qrPanel" class="fixed bottom-4 right-4 panel rounded-2xl p-4 shadow-2xl">
     <div class="text-xs text-gray-400 mb-2 text-center">
       <i class="fa-solid fa-mobile-screen"></i> 掃描以遙控點歌
     </div>
@@ -110,12 +138,21 @@
     <div id="qrUrl" class="text-[10px] text-gray-400 mt-2 text-center font-mono break-all"></div>
   </div>
 
-  <!-- 沉浸模式時,底部中央保留「目前播放」bar,3 秒後 fade -->
+  <!-- 沉浸模式時,底部中央保留「目前播放」bar -->
   <div id="nowPlayingBar" class="fixed bottom-8 left-1/2 -translate-x-1/2 panel rounded-full px-8 py-3 max-w-2xl text-center shadow-2xl">
     <div class="flex items-center gap-3 text-base">
       <i class="fa-solid fa-microphone-lines text-pink-400"></i>
       <span id="nowPlayingBarTitle" class="font-bold glow-text truncate">等待點歌中...</span>
       <span id="nowPlayingBarArtist" class="text-gray-300 text-sm"></span>
+    </div>
+  </div>
+
+  <!-- 「已點播：xxx」toast -->
+  <div id="songAddedToast" class="panel rounded-xl px-6 py-3 shadow-2xl">
+    <div class="flex items-center gap-3 text-base">
+      <i class="fa-solid fa-circle-check text-green-400 text-xl"></i>
+      <span class="text-gray-400 text-sm">已點播</span>
+      <span id="songAddedToastTitle" class="font-bold glow-text">—</span>
     </div>
   </div>
 
