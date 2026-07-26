@@ -67,6 +67,54 @@
     .eq-bar {
       animation: equalize 0.8s ease-in-out infinite;
     }
+
+    /* 加歌 FAB */
+    .fab {
+      background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%);
+      box-shadow: 0 12px 36px -10px rgba(236, 72, 153, 0.7), 0 0 0 4px rgba(236, 72, 153, 0.15);
+      transition: all 0.2s ease;
+    }
+    .fab:active { transform: scale(0.92); }
+
+    /* 加歌 modal */
+    .modal-backdrop {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(6px);
+    }
+    .modal-content {
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* 进度面板 */
+    .progress-track {
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, #ec4899, #8b5cf6, #06b6d4);
+      background-size: 200% 100%;
+      animation: shimmer 2s linear infinite;
+      transition: width 0.5s ease;
+    }
+    @keyframes shimmer {
+      0% { background-position: 0% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .stage-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+    }
+    .stage-dot.active {
+      background: #ec4899;
+      box-shadow: 0 0 8px #ec4899;
+    }
+    .stage-dot.done {
+      background: #10b981;
+    }
   </style>
 </head>
 <body class="overflow-x-hidden">
@@ -84,8 +132,13 @@
           </p>
         </div>
       </div>
-      <div id="deviceBadge" class="text-[10px] px-2 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300">
-        <i class="fa-solid fa-mobile-screen"></i> Controller
+      <div class="flex items-center gap-2">
+        <button id="btnAddSong" class="fab w-10 h-10 rounded-full flex items-center justify-center text-xl" title="加入新歌">
+          <i class="fa-solid fa-plus"></i>
+        </button>
+        <div id="deviceBadge" class="text-[10px] px-2 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300">
+          <i class="fa-solid fa-mobile-screen"></i> Controller
+        </div>
       </div>
     </header>
 
@@ -149,6 +202,20 @@
 
     <!-- 點歌列表 -->
     <section id="tab-search" class="tab-panel px-4 mt-4">
+      <!-- 處理中的任務面板 -->
+      <div id="jobsPanel" class="mb-4 hidden">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-bold text-pink-400 tracking-widest flex items-center gap-2">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> AI 處理中
+            <span id="jobsCount" class="px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 text-[10px]">0</span>
+          </h3>
+          <button id="jobsRefresh" class="text-[10px] text-gray-400 hover:text-white">
+            <i class="fa-solid fa-rotate"></i> 刷新
+          </button>
+        </div>
+        <div id="jobsList" class="space-y-2"></div>
+      </div>
+
       <div class="relative mb-3">
         <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
         <input id="searchInput" type="text" placeholder="搜尋歌名 / 歌手..."
@@ -167,6 +234,61 @@
       </div>
     </section>
 
+  </div>
+
+  <!-- 加歌 Modal -->
+  <div id="addSongModal" class="fixed inset-0 z-40 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-modal></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-5 w-full max-w-md border border-white/10 max-h-[90vh] overflow-y-auto scrollbar-hide">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-bold text-lg flex items-center gap-2">
+            <i class="fa-solid fa-plus-circle text-pink-400"></i> 加入新歌
+          </h2>
+          <button data-close-modal class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <p class="text-xs text-gray-400 mb-4">
+          貼上 YouTube 網址,系統會自動下載、分離人聲、混音成 KTV 版。約 3-5 分鐘。
+        </p>
+
+        <form id="addSongForm" class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1.5 font-bold">
+              <i class="fa-brands fa-youtube text-red-400"></i> YouTube 網址 <span class="text-pink-400">*</span>
+            </label>
+            <input id="inputUrl" type="url" required
+                   placeholder="https://www.youtube.com/watch?v=..."
+                   class="w-full glass rounded-xl px-3 py-3 text-sm outline-none focus:border-pink-500/50" />
+          </div>
+
+          <details class="glass rounded-xl overflow-hidden">
+            <summary class="px-3 py-2.5 text-xs font-bold text-gray-300 cursor-pointer hover:text-white flex items-center gap-2 list-none">
+              <i class="fa-solid fa-sliders"></i> 自訂標題與歌手 (選填)
+            </summary>
+            <div class="px-3 pb-3 pt-1 space-y-2">
+              <div>
+                <label class="text-[10px] text-gray-500 block mb-1">歌名</label>
+                <input id="inputTitle" type="text" placeholder="自動從 YouTube 抓取"
+                       class="w-full glass rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-500/50" />
+              </div>
+              <div>
+                <label class="text-[10px] text-gray-500 block mb-1">歌手</label>
+                <input id="inputArtist" type="text" placeholder="自動從 YouTube 抓取"
+                       class="w-full glass rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-500/50" />
+              </div>
+            </div>
+          </details>
+
+          <button id="btnSubmitSong" type="submit"
+                  class="w-full pink-btn rounded-xl py-3.5 font-bold flex items-center justify-center gap-2">
+            <i class="fa-solid fa-rocket"></i> 開始處理
+          </button>
+        </form>
+      </div>
+    </div>
   </div>
 
   <!-- Toast -->

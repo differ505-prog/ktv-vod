@@ -25,6 +25,7 @@ services:
       - CORS_ORIGIN=*
       - VIDEO_DIR=/ktv-data/processed
       - VIDEO_URL_PREFIX=/videos
+      - PIPELINE_WORK_DIR=/ktv-data/work
       - PIPELINE_API_URL=http://ktv-pipeline:5050
       - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
       - DEMUCS_MODEL=${DEMUCS_MODEL:-htdemucs}
