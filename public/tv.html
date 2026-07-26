@@ -96,6 +96,21 @@
     </div>
   </div>
 
+  <!-- 首次播放解鎖 overlay (瀏覽器 autoplay policy) -->
+  <div id="unlockOverlay" class="fixed inset-0 z-30 bg-black/80 flex items-center justify-center cursor-pointer backdrop-blur-md">
+    <div class="text-center p-8 panel rounded-3xl max-w-lg">
+      <div class="text-7xl mb-6 animate-bounce">🎬</div>
+      <h2 class="text-3xl font-bold glow-text mb-3">點擊任意處開始</h2>
+      <p class="text-gray-300 text-sm leading-relaxed">
+        瀏覽器需要您點一下頁面，才能播放聲音。<br/>
+        點完這訊息就會消失。
+      </p>
+      <div class="mt-6 text-pink-400 text-xs tracking-widest">
+        <i class="fa-solid fa-hand-pointer"></i> TAP TO START
+      </div>
+    </div>
+  </div>
+
   <script src="./tv.js"></script>
 </body>
 </html>

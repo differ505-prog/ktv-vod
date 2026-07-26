@@ -18,6 +18,7 @@
   const standbyScreen = document.getElementById('standbyScreen');
   const qrcodeDiv = document.getElementById('qrcode');
   const qrUrlDiv = document.getElementById('qrUrl');
+  const unlockOverlay = document.getElementById('unlockOverlay');
 
   // ===== 產生 QR Code =====
   // 內容：http://[伺服器IP]:[Port]/mobile.html
@@ -54,6 +55,10 @@
   let rightGainVocalOff = null;
   let destinationGain = null;
   let audioReady = false;
+
+  // Autoplay / Audio-Context 解鎖狀態
+  let audioUnlocked = false;
+  let pendingFirstPlay = false;
 
   function initAudioGraph() {
     if (audioReady) return;
@@ -172,16 +177,40 @@
 
     initAudioGraph(); // 第一次播放時 (需 user gesture) 才建圖
 
-    // resume AudioContext (瀏覽器政策)
+    // resume AudioContext (瀏覽器政策：必須在 user gesture 內)
     if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
+      // 若已經被 unlock,直接 resume；否則把它排隊,等 user 點一下 overlay
+      if (audioUnlocked) {
+        audioCtx.resume().catch(() => {});
+      } else {
+        pendingFirstPlay = true;
+        unlockOverlay.style.display = 'flex';
+      }
     }
 
     video.src = song.src;
     video.loop = false;
     // 等 canplay 再 play
     const onCanPlay = () => {
-      video.play().catch((err) => console.warn('播放失敗：', err));
+      if (!audioUnlocked && audioCtx && audioCtx.state === 'suspended') {
+        // 還在等 user gesture，把 play() 也排隊
+        pendingFirstPlay = true;
+        unlockOverlay.style.display = 'flex';
+        video.removeEventListener('canplay', onCanPlay);
+        return;
+      }
+      const p = video.play();
+      if (p && p.catch) {
+        p.catch((err) => {
+          if (err && err.name === 'NotAllowedError') {
+            console.warn('[播放] 等 user gesture');
+            pendingFirstPlay = true;
+            unlockOverlay.style.display = 'flex';
+          } else {
+            console.warn('播放失敗：', err);
+          }
+        });
+      }
       video.removeEventListener('canplay', onCanPlay);
     };
     video.addEventListener('canplay', onCanPlay);
@@ -199,10 +228,52 @@
     setTimeout(() => socket.emit('song_ended'), 1500);
   });
 
-  // 點擊空白處恢復音訊 (有些瀏覽器需 user gesture)
-  document.addEventListener('click', () => {
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
+  // ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
+  async function unlockAudioPlayback() {
+    if (audioUnlocked) return;
+    try {
+      // 先把 AudioContext 建好並 resume (這段必須在 gesture callback 內同步執行)
+      initAudioGraph();
+      if (audioCtx) {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        // 播一個靜音 sample buffer (consumes the user-activation credit)
+        const buf = audioCtx.createBuffer(1, 1, 22050);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(audioCtx.destination);
+        try { src.start(0); } catch (_) {}
+      }
+      audioUnlocked = true;
+      unlockOverlay.style.display = 'none';
+      console.log('[播放] 已解鎖 audio playback');
+
+      // 如果解鎖時有歌曲正在等,把它真的播下去
+      if (pendingFirstPlay && video.src) {
+        pendingFirstPlay = false;
+        try {
+          await video.play();
+        } catch (err) {
+          console.warn('[播放] 解鎖後仍失敗：', err);
+        }
+      }
+    } catch (err) {
+      console.error('[播放] 解鎖失敗：', err);
     }
-  }, { once: false });
+  }
+
+  // 點 overlay 或整個 document 都算 gesture (但只第一次有用)
+  unlockOverlay.addEventListener('click', unlockAudioPlayback, { once: true });
+  // 額外保險：點文件任何地方也能解鎖
+  document.addEventListener(
+    'click',
+    () => {
+      if (!audioUnlocked) unlockAudioPlayback();
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+    },
+    { once: false }
+  );
 })();
