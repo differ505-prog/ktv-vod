@@ -207,6 +207,11 @@
     </div>
   </div>
 
-  <script src="./tv.js"></script>
+  <script>
+    // Cache-busting: 部署時間戳,讓 user 不必手動 Ctrl+Shift+R
+    document.write(
+      '<script src="./tv.js?v=' + Date.now() + '"><\/script>'
+    );
+  </script>
 </body>
 </html>

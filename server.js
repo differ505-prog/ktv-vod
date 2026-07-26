@@ -55,7 +55,16 @@ const io = new Server(server, {
 });
 
 // ===== 靜態託管 =====
-app.use(express.static(path.join(__dirname, 'public')));
+// HTML 永遠不要 cache (browser 必須抓新版 — JS 用 query string 自行 bust)
+// 其他靜態資源 (js/css/圖) 預設即可
+app.use((req, res, next) => {
+  if (req.path.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
+}, express.static(path.join(__dirname, 'public')));
 
 // 影片檔案靜態託管 (支援 range request, 適合大型 mp4 串流)
 app.use(

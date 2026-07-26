@@ -375,6 +375,12 @@
     </div>
   </div>
 
-  <script src="./mobile.js"></script>
+  <script>
+    // Cache-busting: 部署時間戳,讓 user 不必手動 Ctrl+Shift+R
+    // 用 document.write 同步替換 src,避免 race
+    document.write(
+      '<script src="./mobile.js?v=' + Date.now() + '"><\/script>'
+    );
+  </script>
 </body>
 </html>
