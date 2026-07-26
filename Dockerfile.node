@@ -35,6 +35,8 @@ COPY --from=builder --chown=ktv:ktv /app/node_modules ./node_modules
 COPY --chown=ktv:ktv package.json ./
 COPY --chown=ktv:ktv server.js ./
 COPY --chown=ktv:ktv public ./public
+# 輔助腳本（音訊抽軌等）
+COPY --chown=ktv:ktv scripts ./scripts
 
 # 預留資料目錄 (實際建議 bind mount NAS volume)
 RUN mkdir -p /app/videos /app/ktv-data/processed /app/ktv-data/work \
