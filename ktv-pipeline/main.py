@@ -331,9 +331,31 @@ def stage_separate(
 
     # ---- 分離 ----
     logger.info("[Demucs] 執行分離（這可能需要幾分鐘）...")
+    # demucs 4.x: HDemucs.forward() 拋 NotImplementedError; 必須用 apply_model()
+    from demucs.apply import apply_model
     with torch.no_grad():
-        sources = model(wav_tensor.unsqueeze(0))  # (1, 4, T)
-    sources = sources.squeeze(0).cpu().numpy()    # (4, T)
+        out = apply_model(
+            model,
+            wav_tensor.unsqueeze(0),   # (1, channels, samples) batch 維
+            shifts=0,                   # 0 = 跑一次（最省時間/記憶體）
+            overlap=0.25,
+        )
+    # apply_model 回傳 Tensor list 或 Tensor；確保 (sources, channels, samples)
+    if isinstance(out, (list, tuple)):
+        sources_tensor = out[0]
+    else:
+        sources_tensor = out
+    sources = sources_tensor.squeeze(0).cpu().numpy()    # (sources, channels, samples)
+    # 若 channels == 1，去掉
+    if sources.ndim == 3 and sources.shape[1] == 1:
+        sources = sources.squeeze(1)
+    # 降到 (sources, samples) 2D for save_audio / mix
+    if sources.ndim == 3:
+        # 多 channel (rare): 取第一個 channel
+        sources = sources[:, 0, :]
+    # 對齊 source 軸: htdemucs 對應 drums / bass / other / vocals 順序
+    if sources.shape[0] != 4:
+        logger.warning(f"[Demucs] 非預期 source 數 {sources.shape[0]}，預期 4")
 
     # ---- 寫入檔案 ----
     # 對應 htdemucs 的 source 順序：drums, bass, other, vocals
