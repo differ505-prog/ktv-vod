@@ -91,16 +91,19 @@ def sanitize_filename(title: str) -> str:
     # 移除 emoji 以及其他 CJK 擴充區段（但保留基本中文、英文、數字）
     # Unicode 範圍：\u4e00-\u9fff (CJK基本) \u3400-\u4dbf (擴展A) \uff00-\uffef (全形)
     # 其餘超出範圍的全砍掉（emoji、顏文字、音樂符號等）
-    clean = re.sub(
-        r"[\U0001F000-\U0001FAFF"   # emoji 區段
-        r"\U00002702-\U000027B0"    # dingbats
-        r"\U00002000-\U0000202F"    # 空白與標點
-        r"\U00002190-\U000021FF"    # 箭頭
-        r"\U00002300-\U000023FF"    # 數學運算
-        r"\U00002460-\U000024FF"    # 包圍數字字母
-        r"\U00002600-\U000026FF]"    # 其它符號
-        r"", clean, flags=re.UNICODE
+    # 注意：\U0001F000 等 8 字元 escape 必須在一般字串 (非 raw) 才能被解讀為單一 codepoint
+    emoji_classes = (
+        "[" + "".join(
+            map(chr, range(0x1F000, 0x1FAFF + 1))   # emoji 區段
+        ) + "".join(map(chr, range(0x2702, 0x27B0 + 1)))   # dingbats
+        + "".join(map(chr, range(0x2000, 0x202F + 1)))   # 空白與標點
+        + "".join(map(chr, range(0x2190, 0x21FF + 1)))   # 箭頭
+        + "".join(map(chr, range(0x2300, 0x23FF + 1)))   # 數學運算
+        + "".join(map(chr, range(0x2460, 0x24FF + 1)))   # 包圍數字字母
+        + "".join(map(chr, range(0x2600, 0x26FF + 1)))   # 其它符號
+        + "]"
     )
+    clean = re.sub(emoji_classes, "", clean)
 
     # 消掉連續空白、底線、dash，合併成單一底線
     clean = re.sub(r"[\s_—–-]+", "_", clean).strip("_").strip()
