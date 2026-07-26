@@ -12,6 +12,7 @@ yt-dlp>=2024.0.0
 demucs>=4.0.0
 torch>=2.0.0          # 搭配 demucs
 torchaudio>=2.0.0     # 搭配 demucs
+numpy>=1.23,<2.0      # demucs 4.x 的隱性依賴,套件 metadata 未宣告
 
 # FFmpeg Python 封裝 (非強制，直接呼叫 subprocess 也可)
 # ffmpeg-python>=0.2.0

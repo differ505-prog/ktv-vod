@@ -33,9 +33,12 @@ try:
     from demucs.hdemucs import HDemucs
     import torch
     DEMUCS_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     DEMUCS_AVAILABLE = False
-    # 如果未安裝 demucs，在 try_import 階段才告知，不在此阻斷
+    # 記下真正的 import 錯誤，stage_separate 會拿來告訴使用者
+    DEMUCS_IMPORT_ERROR = repr(e)
+else:
+    DEMUCS_IMPORT_ERROR = None
 
 # ============================================================
 # 1. Logging 設定
@@ -123,8 +126,12 @@ def check_file_exists(path: Path) -> bool:
 def is_demucs_available() -> bool:
     """確認 demucs 是否已正確安裝。"""
     if not DEMUCS_AVAILABLE:
+        hint = (
+            f"（真實 import 錯誤：{DEMUCS_IMPORT_ERROR}）"
+            if DEMUCS_IMPORT_ERROR else ""
+        )
         logger.warning(
-            "[!] demucs 未安裝。執行：pip install demucs torch torchaudio"
+            f"[!] demucs 無法載入，AI 分離階段會跳過。{hint}"
         )
         return False
     return True
