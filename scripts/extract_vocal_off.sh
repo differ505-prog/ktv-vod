@@ -45,8 +45,8 @@ for src in "${TARGETS[@]}"; do
       ;;
   esac
 
-  base="${src%_ktv.mp4}"
-  out="${base}_vocal_off.mp4"
+  base="${src%.mp4}"          # 去掉 .mp4（保留 _ktv 後綴）
+  out="${base}_vocal_off.mp4"  # <name>_ktv_vocal_off.mp4
 
   if [ -f "$out" ]; then
     echo "[extract_vocal_off] 已存在，跳過：$(basename "$out")"
