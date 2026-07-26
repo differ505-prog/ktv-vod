@@ -440,32 +440,32 @@ def stage_mix_and_encode(
 
     logger.info(f"[FFmpeg] 階段 3/3：混音與封裝 → {output_path.name}")
 
-    # 若視訊有內嵌音軌，先去除
+    # 直接三個檔案輸入，不繞 lavfi movie= filter（容易在某些版本的 ffmpeg 與 mp4 上 invalid）
+    # -i 0: 視訊
+    # -i 1: 伴奏 (左/右/左/右 將被 pan 到 L)
+    # -i 2: 人聲 (將被 pan 到 R)
     cmd = [
         "ffmpeg", "-y",
-        # 輸入 0：視訊（去除音軌）
-        "-f", "lavfi", "-i", f"movie={video_path},remove_logo=0[v]", "-map", "0:v",
-        # 輸入 1：伴奏
+        "-i", str(video_path),
         "-i", str(no_vocals_path),
-        # 輸入 2：人聲
         "-i", str(vocals_path),
-        # 濾鏡：混成左伴奏右人聲
+        # 濾鏡：把兩個音訊饋送都轉 stereo，再用 pan 把伴奏塞左、人聲塞右
         "-filter_complex",
         (
-            "[1:a]aformat=sample_fmts=flt:channel_layouts=stereo[a_cc];"
-            "[2:a]aformat=sample_fmts=flt:channel_layouts=stereo[v_cc];"
-            "[a_cc][v_cc]amix=inputs=2:duration=first:dropout_transition=0[m];"
-            "[m]pan=stereo|c0=c0|c1=c1[out]"
+            "[1:a]aresample=44100,aformat=sample_fmts=fltl:channel_layouts=stereo[a_cc];"
+            "[2:a]aresample=44100,aformat=sample_fmts=fltl:channel_layouts=stereo[v_cc];"
+            "[a_cc][v_cc]amerge=inputs=2,pan=stereo|c0=c0|c1=c2[out]"
         ),
+        "-map", "0:v",
         "-map", "[out]",
-        # 視訊不重新編碼，音訊 AAC 192kbps
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
+        "-ar", "44100",
+        "-ac", "2",
         "-shortest",
+        "-movflags", "+faststart",
         str(output_path),
     ]
-
-    logger.debug(f"[FFmpeg] 執行：{' '.join(cmd[:12])} ... (省略)")
 
     try:
         result = subprocess.run(
@@ -475,8 +475,13 @@ def stage_mix_and_encode(
             timeout=3600,  # 1 小時上限
         )
         if result.returncode != 0:
-            stderr = result.stderr[-1500:]
-            logger.error(f"[FFmpeg] 執行失敗：\n{stderr}")
+            stderr = (result.stderr or "").strip() or "(empty stderr)"
+            stdout = (result.stdout or "").strip() or "(empty stdout)"
+            logger.error(
+                f"[FFmpeg] 執行失敗 rc={result.returncode}\n"
+                f"--- stderr ---\n{stderr[-1500:]}\n"
+                f"--- stdout ---\n{stdout[-500:]}"
+            )
             raise RuntimeError(f"FFmpeg 合併失敗 (rc={result.returncode})")
     except subprocess.TimeoutExpired:
         raise RuntimeError("[ERROR] FFmpeg 執行逾時（>1 小時）")
