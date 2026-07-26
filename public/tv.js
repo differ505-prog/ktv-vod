@@ -172,7 +172,19 @@ function initAudioGraph() {
     const seekTo = video.currentTime || 0;
     console.log(`[音訊切換] ${mode} → ${desired}, currentTime=${seekTo.toFixed(2)}, playing=${wasPlaying}`);
 
-    pendingSeekTime = seekTo;
+    // vocal_off mp4 的音訊在 pan filter 重新編碼後，首 frame 會比視訊晚一點點
+    // （即使 ffmpeg 已用 first_pts=0，瀏覽器解碼器仍會有 ~80ms 的初始化延遲），
+    // 因此切到 vocal_off 時把 currentTime 往前推一點，讓字幕追上音樂。
+    // 切回 original 則反向扣回，避免再次偏移。
+    const AUDIO_MODE_DELAY_MS = 80; // 毫秒，empirical 值；若仍不對請報給我調
+    let effectiveSeek = seekTo;
+    if (mode === 'vocal_off') {
+      effectiveSeek = Math.max(0, seekTo + AUDIO_MODE_DELAY_MS / 1000);
+    } else if (mode === 'original') {
+      effectiveSeek = Math.max(0, seekTo - AUDIO_MODE_DELAY_MS / 1000);
+    }
+
+    pendingSeekTime = effectiveSeek;
     video.src = desired;
     video.loop = false;
 
