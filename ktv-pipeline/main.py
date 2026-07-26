@@ -452,8 +452,8 @@ def stage_mix_and_encode(
         # 濾鏡：把兩個音訊饋送都轉 stereo，再用 pan 把伴奏塞左、人聲塞右
         "-filter_complex",
         (
-            "[1:a]aresample=44100,aformat=sample_fmts=fltl:channel_layouts=stereo[a_cc];"
-            "[2:a]aresample=44100,aformat=sample_fmts=fltl:channel_layouts=stereo[v_cc];"
+            "[1:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[a_cc];"
+            "[2:a]aresample=44100,aformat=sample_fmts=flt:channel_layouts=stereo[v_cc];"
             "[a_cc][v_cc]amerge=inputs=2,pan=stereo|c0=c0|c1=c2[out]"
         ),
         "-map", "0:v",
