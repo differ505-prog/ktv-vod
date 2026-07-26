@@ -194,6 +194,12 @@
           <span id="immersiveLabel" class="text-sm font-bold">TV 全螢幕</span>
         </button>
       </div>
+
+      <!-- 主揪模式 (Host Mode) — 解鎖後顯示垃圾桶入口與佇列卡長按刪除 -->
+      <button id="btnHost" class="mt-3 w-full glass rounded-xl px-4 py-2 text-xs text-gray-400 hover:text-white hover:bg-white/10 transition flex items-center justify-center gap-2" title="輸入主揪密碼解鎖刪除功能">
+        <i id="hostIcon" class="fa-solid fa-lock text-[10px]"></i>
+        <span id="hostLabel">主揪模式 (點擊解鎖)</span>
+      </button>
     </section>
 
     <!-- 分頁切換 -->
@@ -303,6 +309,70 @@
   <div id="toast" class="fixed bottom-24 left-1/2 -translate-x-1/2 glass px-4 py-2 rounded-xl text-sm hidden z-50">
     <i class="fa-solid fa-circle-check text-green-400"></i>
     <span id="toastText"></span>
+  </div>
+
+  <!-- 主揪模式密碼輸入 -->
+  <div id="hostModal" class="fixed inset-0 z-40 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-host></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-6 w-full max-w-xs border border-white/10 text-center">
+        <div class="text-3xl mb-3">🔐</div>
+        <h3 class="font-bold text-lg mb-1">解鎖主揪模式</h3>
+        <p class="text-xs text-gray-400 mb-4">輸入 4 位數密碼以啟用刪除功能</p>
+        <input id="hostPinInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off"
+               placeholder="••••"
+               class="w-full glass rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] outline-none focus:border-pink-500/50 mb-3" />
+        <button id="hostConfirm" class="w-full pink-btn rounded-xl py-3 font-bold">
+          <i class="fa-solid fa-lock-open"></i> 解鎖
+        </button>
+        <button class="block mx-auto mt-3 text-xs text-gray-400" data-close-host>取消</button>
+        <p class="text-[10px] text-gray-500 mt-3">預設 PIN 是 <code class="text-pink-400">0000</code>，可在伺服器 .env 修改 <code>HOST_PIN</code></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 永久刪除確認 (主揪模式限定) -->
+  <div id="deleteModal" class="fixed inset-0 z-40 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-delete></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-6 w-full max-w-sm border border-red-500/30 text-center">
+        <div class="text-4xl mb-3">⚠️</div>
+        <h3 class="font-bold text-lg mb-2">永久刪除？</h3>
+        <p class="text-sm text-gray-300 mb-2">你正要刪除：</p>
+        <div id="deleteSongTitle" class="px-3 py-2 rounded-xl bg-white/5 text-pink-300 font-bold mb-3 truncate"></div>
+        <p class="text-xs text-gray-400 mb-4 leading-relaxed">
+          檔案會被移到 <code class="text-amber-400">videos/_Trash/</code>。
+          <br/>不是永久消失 — 你可以從垃圾桶復原。
+        </p>
+        <div class="flex gap-2">
+          <button data-close-delete class="flex-1 glass rounded-xl py-2.5 font-bold text-sm">取消</button>
+          <button id="deleteConfirm" class="flex-1 rounded-xl py-2.5 font-bold text-sm bg-gradient-to-br from-red-500 to-red-700 text-white">
+            <i class="fa-solid fa-trash"></i> 刪除
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 垃圾桶檢視 (主揪模式限定) -->
+  <div id="trashModal" class="fixed inset-0 z-40 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-trash></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-5 w-full max-w-md border border-white/10 max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-bold text-lg flex items-center gap-2">
+            <i class="fa-solid fa-trash-can text-amber-400"></i> 垃圾桶
+          </h3>
+          <button data-close-trash class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="text-xs text-gray-400 mb-3">最近刪除的歌曲（最多 50 筆）。派對誤刪？從這裡復原。</p>
+        <div id="trashList" class="space-y-2 overflow-y-auto scrollbar-hide flex-1">
+          <div class="text-center text-gray-500 text-sm py-6">載入中...</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="./mobile.js"></script>

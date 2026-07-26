@@ -21,6 +21,9 @@
   const btnVocal = document.getElementById('btnVocal');
   const btnImmersive = document.getElementById('btnImmersive');
   const btnShowQr = document.getElementById('btnShowQr');
+  const btnHost = document.getElementById('btnHost');
+  const hostIcon = document.getElementById('hostIcon');
+  const hostLabel = document.getElementById('hostLabel');
   const immersiveLabel = document.getElementById('immersiveLabel');
   const immersiveIcon = document.getElementById('immersiveIcon');
   const vocalLabel = document.getElementById('vocalLabel');
@@ -42,6 +45,15 @@
   const jobsList = document.getElementById('jobsList');
   const jobsCount = document.getElementById('jobsCount');
   const jobsRefresh = document.getElementById('jobsRefresh');
+  // 主揪模式 + 刪除相關 modal
+  const hostModal = document.getElementById('hostModal');
+  const hostPinInput = document.getElementById('hostPinInput');
+  const hostConfirm = document.getElementById('hostConfirm');
+  const deleteModal = document.getElementById('deleteModal');
+  const deleteSongTitle = document.getElementById('deleteSongTitle');
+  const deleteConfirm = document.getElementById('deleteConfirm');
+  const trashModal = document.getElementById('trashModal');
+  const trashList = document.getElementById('trashList');
 
   // ===== 狀態 =====
   let songs = [];       // 歌曲庫
@@ -49,6 +61,13 @@
   let currentSong = null;
   let audioMode = 'original';
   let immersiveMode = false;
+
+  // 主揪模式 (Host Mode):
+  //   - 解鎖後,手機端可以顯示「永久刪除」「垃圾桶入口」等危險操作。
+  //   - PIN 不存 localStorage,只存「已登入的 session」boolean (每次打開頁面都要重打)。
+  //   - 真正的 PIN 由伺服器驗證,前端只是 UX。
+  let hostModeUnlocked = false;
+  let pendingDeleteSongId = null; // 正在 confirm 的 song id
 
   // 加歌任務追蹤: jobId → { url, title, artist, status, percent, detail, error }
   const jobs = new Map();
@@ -174,6 +193,195 @@
     showToast('📺 TV 已顯示 QR Code 15 秒', 'info');
   });
 
+  // ===== 主揪模式 (Host Mode) — 三層防護的第 2 層 =====
+  // - 按鈕常駐顯示 (低調)
+  // - 解鎖後,UI 進入「已登入」狀態 (icon 變綠勾),垃圾桶入口浮現,佇列卡長按 → 永久刪除入口
+  // - lock 后,UI 回到「未登入」狀態
+  function renderHostUI() {
+    if (hostModeUnlocked) {
+      hostIcon.className = 'fa-solid fa-lock-open text-green-400 text-[10px]';
+      hostLabel.textContent = '主揪模式已啟用 · 點擊鎖回';
+      btnHost.classList.add('border', 'border-green-500/30');
+      // 把垃圾桶入口塞進待播佇列 tab 旁 (用 footer button 的方式)
+      ensureTrashButton();
+    } else {
+      hostIcon.className = 'fa-solid fa-lock text-[10px]';
+      hostLabel.textContent = '主揪模式 (點擊解鎖)';
+      btnHost.classList.remove('border', 'border-green-500/30');
+      removeTrashButton();
+    }
+  }
+
+  let trashButtonEl = null;
+  function ensureTrashButton() {
+    if (trashButtonEl) return;
+    trashButtonEl = document.createElement('button');
+    trashButtonEl.id = 'btnTrash';
+    trashButtonEl.className = 'mt-2 w-full glass rounded-xl px-4 py-2 text-xs text-amber-300 hover:text-amber-100 hover:bg-amber-500/10 transition flex items-center justify-center gap-2';
+    trashButtonEl.innerHTML = '<i class="fa-solid fa-trash-can"></i> <span>查看垃圾桶</span>';
+    trashButtonEl.addEventListener('click', openTrashModal);
+    btnHost.parentElement.appendChild(trashButtonEl);
+  }
+  function removeTrashButton() {
+    if (trashButtonEl) {
+      trashButtonEl.remove();
+      trashButtonEl = null;
+    }
+  }
+
+  btnHost.addEventListener('click', () => {
+    if (hostModeUnlocked) {
+      // 已解鎖 → 點擊 = 鎖回去
+      hostModeUnlocked = false;
+      renderHostUI();
+      showToast('🔒 主揪模式已鎖回', 'info');
+    } else {
+      // 未解鎖 → 顯示 PIN 輸入
+      hostModal.classList.remove('hidden');
+      setTimeout(() => hostPinInput.focus(), 150);
+      hostPinInput.value = '';
+    }
+  });
+  document.querySelectorAll('[data-close-host]').forEach((el) => {
+    el.addEventListener('click', () => hostModal.classList.add('hidden'));
+  });
+  hostPinInput.addEventListener('input', () => {
+    // 自動 submit on 4 digits
+    if (hostPinInput.value.length === 4) hostConfirm.click();
+  });
+  hostConfirm.addEventListener('click', () => {
+    const pin = hostPinInput.value.trim();
+    if (!/^\d{4}$/.test(pin)) {
+      showToast('請輸入 4 位數字', 'error');
+      return;
+    }
+    // 把 PIN 送 server 驗證 (不用先做完所有事才驗)
+    fetch('/api/songs/host-verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostPin: pin }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          hostModeUnlocked = true;
+          hostModal.classList.add('hidden');
+          renderHostUI();
+          showToast('🔓 主揪模式已啟用', 'success');
+        } else {
+          showToast('密碼錯誤', 'error');
+          hostPinInput.value = '';
+          hostPinInput.focus();
+        }
+      })
+      .catch((err) => {
+        showToast(`驗證失敗：${err.message}`, 'error');
+      });
+  });
+
+  // ===== 永久刪除確認 (主揪模式限定) =====
+  document.querySelectorAll('[data-close-delete]').forEach((el) => {
+    el.addEventListener('click', () => {
+      deleteModal.classList.add('hidden');
+      pendingDeleteSongId = null;
+    });
+  });
+  deleteConfirm.addEventListener('click', async () => {
+    if (!pendingDeleteSongId || !hostModeUnlocked) return;
+    const songId = pendingDeleteSongId;
+    const pin = prompt('再輸入一次主揪密碼確認'); // 二次密碼確認
+    // 上面 prompt 對 mobile UX 不友善,但在二次確認 modal 裡是合理的
+    // 實務上更佳是用第二顆輸入 — 為簡化沿用瀏覽器內建 prompt,
+    // 若被 user 取消 → do nothing
+    if (pin === null) return;
+    deleteConfirm.disabled = true;
+    deleteConfirm.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 搬移中...';
+    try {
+      const res = await fetch('/api/songs/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songId, hostPin: pin }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || '刪除失敗');
+      showToast(`🗑️ 已移到垃圾桶: ${data.moved?.join(', ') || ''}`, 'success');
+      deleteModal.classList.add('hidden');
+      pendingDeleteSongId = null;
+      // 廣播 library_updated 由 server 處理,前端會透過 socket 自動收到
+    } catch (err) {
+      showToast(`❌ ${err.message}`, 'error');
+    } finally {
+      deleteConfirm.disabled = false;
+      deleteConfirm.innerHTML = '<i class="fa-solid fa-trash"></i> 刪除';
+    }
+  });
+
+  // ===== 垃圾桶檢視 / 復原 =====
+  document.querySelectorAll('[data-close-trash]').forEach((el) => {
+    el.addEventListener('click', () => trashModal.classList.add('hidden'));
+  });
+  async function openTrashModal() {
+    trashModal.classList.remove('hidden');
+    trashList.innerHTML = '<div class="text-center text-gray-500 text-sm py-6">載入中...</div>';
+    try {
+      const res = await fetch('/api/songs/trash');
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+      renderTrash(data.items);
+    } catch (err) {
+      trashList.innerHTML = `<div class="text-center text-red-400 text-sm py-6">載入失敗：${err.message}</div>`;
+    }
+  }
+  function renderTrash(items) {
+    if (!items || items.length === 0) {
+      trashList.innerHTML = '<div class="text-center text-gray-500 text-sm py-6"><i class="fa-solid fa-trash text-2xl mb-2 block"></i>垃圾桶是空的 🎉</div>';
+      return;
+    }
+    trashList.innerHTML = '';
+    items.forEach((it) => {
+      const li = document.createElement('div');
+      li.className = 'glass rounded-xl p-3 flex items-center gap-3';
+      const sizeStr = it.sizeBytes > 1024 * 1024
+        ? `${(it.sizeBytes / 1024 / 1024).toFixed(1)} MB`
+        : `${(it.sizeBytes / 1024).toFixed(1)} KB`;
+      const dt = new Date(it.mtime);
+      const dtStr = `${dt.getMonth() + 1}/${dt.getDate()} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      li.innerHTML = `
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium truncate">${escapeHtml(it.fileName)}</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">${dtStr} · ${sizeStr}</div>
+        </div>
+        <button class="restore-btn px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center gap-1 flex-shrink-0">
+          <i class="fa-solid fa-rotate-left"></i> 復原
+        </button>
+      `;
+      li.querySelector('.restore-btn').addEventListener('click', async () => {
+        const pin = prompt('輸入主揪密碼復原');
+        if (pin === null) return;
+        li.querySelector('.restore-btn').disabled = true;
+        li.querySelector('.restore-btn').innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        try {
+          const res = await fetch('/api/songs/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileName: it.fileName, hostPin: pin }),
+          });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || '復原失敗');
+          showToast(`✅ 已復原: ${it.fileName}`, 'success');
+          // server 會自動 rebuildLibrary,前端透過 socket 收到 library_updated
+          // 我們也手動 close + 重 fetch:
+          openTrashModal();
+        } catch (err) {
+          showToast(`❌ ${err.message}`, 'error');
+          li.querySelector('.restore-btn').disabled = false;
+          li.querySelector('.restore-btn').innerHTML = '<i class="fa-solid fa-rotate-left"></i> 復原';
+        }
+      });
+      trashList.appendChild(li);
+    });
+  }
+
   function renderImmersiveButton() {
     if (immersiveMode) {
       immersiveLabel.textContent = 'TV 退出全螢幕';
@@ -295,6 +503,20 @@ function renderSongCard(song, opts = {}) {
   return li;
 }
 
+/**
+ * 三層防護的 UI 端實作 — 第 1 層動作分離:
+ *
+ * renderQueue 渲染每張佇列卡時,綁定兩種互動:
+ *   (a) 左滑超過 80px (touch/pointer move) → 滑出刪除「從佇列移除」按鈕
+ *       → release 後按 DELETE 觸發 /api/songs/remove-from-queue
+ *   (b) 長按 600ms → (主揪模式已啟用) 彈「永久刪除」confirm modal
+ *
+ * 兩個動作是分離的:
+ *   左滑  → 只是把這首「不唱了」,檔案還在 NAS / Song Library
+ *   長按  → 主揪決定要把檔案從 NAS 永久踢出去 (其實也只是移到 _Trash)
+ *
+ * 沒解鎖主揪模式時,長按不做事 (只震動一下提示「需主揪模式」)。
+ */
 function renderQueue() {
   queueList.innerHTML = '';
   if (playlist.length === 0) {
@@ -304,8 +526,121 @@ function renderQueue() {
   queueEmpty.classList.add('hidden');
   playlist.forEach((song, idx) => {
     const li = renderSongCard(song, { action: 'queue', index: idx });
+    attachQueueCardGestures(li, song, idx);
     queueList.appendChild(li);
   });
+}
+
+/**
+ * 給佇列卡綁定兩種互動:
+ * - 左滑 → 顯示「移除佇列」按鈕 (release 觸發)
+ * - 長按 → 永久刪除入口 (主揪模式限定)
+ */
+function attachQueueCardGestures(li, song, idx) {
+  // ---- 左滑 (touch/pointer) ----
+  let startX = 0;
+  let dx = 0;
+  let sliding = false;
+  const SLIDE_REVEAL_PX = 80;
+  const SLIDE_DELETE_PX = 140;
+
+  const onDown = (e) => {
+    if (e.target.closest('button')) return; // 放過按鈕
+    const t = e.touches ? e.touches[0] : e;
+    startX = t.clientX;
+    dx = 0;
+    sliding = true;
+    li.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!sliding) return;
+    const t = e.touches ? e.touches[0] : e;
+    dx = t.clientX - startX;
+    // 只接受左滑 (dx < 0),且不超過 -160
+    const clamped = Math.max(-160, Math.min(0, dx));
+    li.style.transform = `translateX(${clamped}px)`;
+  };
+  const onUp = () => {
+    if (!sliding) return;
+    sliding = false;
+    li.style.transition = 'transform 0.2s ease';
+    if (dx <= -SLIDE_DELETE_PX) {
+      // 滑到底 → 直接刪
+      li.style.transform = 'translateX(-100%)';
+      setTimeout(() => removeFromQueue(idx, song), 180);
+    } else if (dx <= -SLIDE_REVEAL_PX) {
+      // 露出刪除按鈕
+      li.style.transform = 'translateX(-80px)';
+    } else {
+      // 沒過門檻,彈回
+      li.style.transform = 'translateX(0)';
+      dx = 0;
+    }
+  };
+
+  li.addEventListener('touchstart', onDown, { passive: true });
+  li.addEventListener('touchmove', onMove, { passive: true });
+  li.addEventListener('touchend', onUp);
+  li.addEventListener('mousedown', onDown);
+  li.addEventListener('mousemove', onMove);
+  li.addEventListener('mouseup', onUp);
+  li.addEventListener('mouseleave', onUp);
+
+  // ---- 長按 (永久刪除入口) ----
+  let pressTimer = null;
+  let longPressed = false;
+  const startPress = () => {
+    longPressed = false;
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      // 視覺提示
+      if ('vibrate' in navigator) navigator.vibrate(40);
+      // 主揪模式沒解鎖 → 提示但不彈 modal (防誤觸 + UX 友善)
+      if (!hostModeUnlocked) {
+        showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
+        return;
+      }
+      // 主揪模式已解鎖 → 永久刪除 confirm
+      openDeleteConfirmModal(song);
+    }, 600);
+  };
+  const cancelPress = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
+    // 若已經觸發 long press → 阻擋 click 事件
+    if (longPressed) {
+      li.addEventListener('click', (e) => e.stopPropagation(), { once: true });
+    }
+  };
+  li.addEventListener('touchstart', startPress);
+  li.addEventListener('touchend', cancelPress);
+  li.addEventListener('touchcancel', cancelPress);
+  li.addEventListener('mousedown', startPress);
+  li.addEventListener('mouseup', cancelPress);
+  li.addEventListener('mouseleave', cancelPress);
+}
+
+async function removeFromQueue(position, song) {
+  try {
+    const res = await fetch('/api/songs/remove-from-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '移除失敗');
+    showToast(`已從佇列移除: ${data.removed?.title || song.title}`, 'success');
+    // playlist_updated 由 server 廣播,前端會自己收到 → renderQueue
+  } catch (err) {
+    showToast(`❌ ${err.message}`, 'error');
+    // 失敗 → 不動 UI,等 server 重發同步
+  }
+}
+
+function openDeleteConfirmModal(song) {
+  pendingDeleteSongId = song.id;
+  deleteSongTitle.textContent = song.title || song.id;
+  deleteModal.classList.remove('hidden');
 }
 
 /**

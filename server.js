@@ -28,6 +28,17 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || '*').split(',').map((s) => s.tri
 const VIDEO_DIR = process.env.VIDEO_DIR || path.join(__dirname, 'videos');
 const VIDEO_URL_PREFIX = process.env.VIDEO_URL_PREFIX || '/videos';
 const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
+
+// ===== 三層防護 = Hard Delete 防呆 (Soft Delete + 密碼 + 不分檔不分伇列) =====
+// TRASH_DIR: 軟刪除把檔案移到這裡,而不是 fs.unlink — 误刪能救回。
+//   - 不直接暴露為 URL prefix (安全考量)
+//   - 預設在 VIDEO_DIR 同層,命名 _Trash (避免被 scanLocalVideos 掃到)
+const TRASH_DIR = process.env.TRASH_DIR || path.join(VIDEO_DIR, '_Trash');
+// HOST_PIN: 主揪模式密碼 (預設 0000,符合「4 位數」的 直覺慣例)
+//   - 可從 .env 覆寫 (生產環境應該改)
+//   - 注意：這是「用户友善的防護」,不替代真正的存取控管
+//   - 但能擋掉派對上一堆人掃 QR 後誤觸的刪除
+const HOST_PIN = process.env.HOST_PIN || '0000';
 const PIPELINE_API_URL = process.env.PIPELINE_API_URL || '';
 const PIPELINE_API_TOKEN = process.env.PIPELINE_API_TOKEN || '';
 const DEMUCS_MODEL = process.env.DEMUCS_MODEL || 'htdemucs';
@@ -256,6 +267,196 @@ function rebuildLibrary() {
 // ===== RESTful API =====
 app.get('/api/songs', (req, res) => {
   res.json({ success: true, songs: SONG_LIBRARY });
+});
+
+/**
+ * 主揪密碼驗證端點 (給前端 UX 用)。
+ * 不回任何實質資訊 (success/fail 已足夠),不暴露 PIN,不做 session。
+ *   - 失敗統一回 success:false,跟真實 invalid 並列,防側信道計時。
+ *   - 唯一存在意義:讓前端可以「透過 server 驗」,而不是寫死 0000 在前端。
+ */
+app.post('/api/songs/host-verify', (req, res) => {
+  const pin = String(req.body?.hostPin ?? '');
+  // 用恆定時間比對,防 timing attack
+  let ok = true;
+  if (pin.length !== HOST_PIN.length) ok = false;
+  for (let i = 0; i < Math.max(pin.length, HOST_PIN.length); i++) {
+    if (pin[i] !== HOST_PIN[i]) ok = false;
+  }
+  // 無論成功失敗都加微小隨機抖動 — 反 profiling
+  setTimeout(() => {
+    if (!ok) log('warn', 'host-verify 失敗', { ip: req.ip });
+    res.json({ success: ok });
+  }, 80 + Math.floor(Math.random() * 60));
+});
+
+/**
+ * 第 1 層 — 動作分離: 從「待播佇列」移除,但不刪檔。
+ *
+ * POST /api/songs/remove-from-queue
+ * Body: { position: 0 }   // 佇列中的 index
+ *
+ * - 找不到/超出範圍 → 400
+ * - 當前播放歌曲不在佇列內,所以移除永不影響正在播的歌
+ * - 立刻廣播 playlist_updated,前端會同步
+ */
+app.post('/api/songs/remove-from-queue', (req, res) => {
+  const position = parseInt(req.body?.position, 10);
+  if (!Number.isInteger(position) || position < 0 || position >= playlist.length) {
+    return res.status(400).json({ success: false, error: '無效的佇列位置' });
+  }
+  const removed = playlist.splice(position, 1)[0];
+  log('info', '從佇列移除 (不刪檔)', { title: removed?.title, position });
+  io.emit('playlist_updated', { playlist: [...playlist], currentSong });
+  return res.json({ success: true, removed: { id: removed?.id, title: removed?.title } });
+});
+
+/**
+ * 第 2 + 3 層: 主揪模式 + 軟刪除 — 移到 _Trash 資料夾,不 fs.unlink。
+ *
+ * POST /api/songs/delete
+ * Body: { songId: 'song-003', hostPin: '0000' }
+ *
+ * - 內建歌曲 (BUILT_IN_SONGS) 拒絕刪除,只允許本機歌曲
+ * - src / srcVocalOff 都移走 (避免變成「唱原唱時還是舊檔」)
+ * - hostPin 錯 → 401 (就算前端藏好,後端也要驗)
+ * - 錯誤時的 cleanup: 若只 mv 成功一個檔,另一個還在原位 → 不要讓使用者以為刪乾淨
+ *   所以先確認所有來源檔都存在,再一次性 mv
+ */
+app.post('/api/songs/delete', (req, res) => {
+  const songId = req.body?.songId;
+  const hostPin = String(req.body?.hostPin ?? '');
+
+  // 主揪模式驗證
+  if (hostPin !== HOST_PIN) {
+    log('warn', 'delete 嘗試但 hostPin 不對', { songId, ip: req.ip });
+    return res.status(401).json({ success: false, error: '主揪密碼錯誤' });
+  }
+
+  const song = SONG_LIBRARY.find((s) => s.id === songId);
+  if (!song) {
+    return res.status(404).json({ success: false, error: '找不到這首歌' });
+  }
+  if (song.source !== 'local') {
+    // 內建歌曲 (Big Buck Bunny 等) 拒絕刪除 — 範例歌曲是基礎建設
+    return res.status(403).json({ success: false, error: '內建歌曲無法刪除 (只能刪本機歌曲)' });
+  }
+
+  // 計算實體檔案路徑 (src 是 URL,要還原到 VIDEO_DIR 的 basename)
+  const sources = [];
+  const srcBasename = path.basename(new URL(song.src, 'http://x').pathname);
+  const srcVocalBasename = song.srcVocalOff
+    ? path.basename(new URL(song.srcVocalOff, 'http://x').pathname)
+    : null;
+  sources.push({ role: 'src', abs: path.join(VIDEO_DIR, srcBasename), fileName: srcBasename });
+  if (srcVocalBasename) {
+    sources.push({ role: 'srcVocalOff', abs: path.join(VIDEO_DIR, srcVocalBasename), fileName: srcVocalBasename });
+  }
+
+  // 防呆 1: 同名檔案已存在於 trash → 加時間戳避免覆蓋
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // ISO with `-` separator
+  for (const s of sources) {
+    s.trashName = fs.existsSync(path.join(TRASH_DIR, s.fileName))
+      ? `${stamp}_${s.fileName}`
+      : s.fileName;
+  }
+
+  // 防呆 2: 先確認所有來源檔都存在, 任一缺失就拒絕 (避免半刪狀態)
+  for (const s of sources) {
+    if (!fs.existsSync(s.abs)) {
+      log('warn', 'delete 拒絕: 來源檔不存在', { songId, role: s.role, file: s.abs });
+      return res.status(400).json({
+        success: false,
+        error: `來源檔不存在: ${s.fileName} (可能已被搬走?)`,
+      });
+    }
+  }
+
+  // 執行 mv
+  try {
+    for (const s of sources) {
+      fs.renameSync(s.abs, path.join(TRASH_DIR, s.trashName));
+      log('info', 'soft delete', { from: s.abs, to: s.trashName });
+    }
+  } catch (err) {
+    // 已 mv 出去的無法自動復原 (只能手動從 trash 撿回)
+    log('error', 'soft delete 部分失敗,需手動復原', { err: err.message });
+    return res.status(500).json({
+      success: false,
+      error: `搬移檔案失敗 (部分已進入垃圾桶): ${err.message}`,
+    });
+  }
+
+  // 從 SONG_LIBRARY 移除 (frontend 不用再過濾,但保持乾淨)
+  SONG_LIBRARY = SONG_LIBRARY.filter((s) => s.id !== songId);
+
+  // 廣播 library_updated,前端自然會過濾掉這首
+  io.emit('library_updated', { songs: SONG_LIBRARY });
+
+  log('info', 'soft delete 完成', { songId, title: song.title });
+  return res.json({
+    success: true,
+    trashedTo: TRASH_DIR,
+    moved: sources.map((s) => s.trashName),
+  });
+});
+
+/**
+ * 最後防線: 列出垃圾桶內容,方便「派對誤刪」隔天救回。
+ * 不需要 hostPin — 這是唯讀,而且只暴露檔名 (不含路徑/雜湊)。
+ */
+app.get('/api/songs/trash', (req, res) => {
+  try {
+    if (!fs.existsSync(TRASH_DIR)) {
+      return res.json({ success: true, items: [] });
+    }
+    const items = fs.readdirSync(TRASH_DIR)
+      .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
+      .map((f) => {
+        const stat = fs.statSync(path.join(TRASH_DIR, f));
+        return {
+          fileName: f,
+          sizeBytes: stat.size,
+          mtime: stat.mtime.toISOString(),
+        };
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));   // 最近刪的在最上
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 把垃圾桶的檔案復原回 VIDEO_DIR。
+ * 復原後會重建 SONG_LIBRARY,會自然納入這首。
+ */
+app.post('/api/songs/restore', (req, res) => {
+  const fileName = req.body?.fileName;
+  const hostPin = String(req.body?.hostPin ?? '');
+  if (hostPin !== HOST_PIN) {
+    return res.status(401).json({ success: false, error: '主揪密碼錯誤' });
+  }
+  if (!fileName || !/^[\w.\-\s()（）\[\]【】「」]+$/.test(fileName)) {
+    return res.status(400).json({ success: false, error: '檔名不合法' });
+  }
+  const src = path.join(TRASH_DIR, fileName);
+  const dst = path.join(VIDEO_DIR, fileName);
+  if (!fs.existsSync(src)) {
+    return res.status(404).json({ success: false, error: '垃圾桶找不到這個檔' });
+  }
+  if (fs.existsSync(dst)) {
+    return res.status(409).json({ success: false, error: '目標位置已有同名檔,無法復原' });
+  }
+  try {
+    fs.renameSync(src, dst);
+    log('info', '從垃圾桶復原', { fileName, to: dst });
+    // fs.watch 會自動偵測,rebuildLibrary 也會在輪詢時跑 (保險起見手動呼叫)
+    setTimeout(() => { try { rebuildLibrary(); } catch (_) {} }, 500);
+    return res.json({ success: true, fileName });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.get('/api/health', (req, res) => {
@@ -576,6 +777,24 @@ function advanceToNextSong() {
   log('info', '現在播放', { title: currentSong.title, mode: audioMode });
 }
 
+/**
+ * 確保 TRASH_DIR 存在。
+ * 啟動時呼叫一次,後續 delete 動作就直接 rename,不需每次 mkdir。
+ * 若 VIDEO_DIR 也不存在 (空資料夾/綁定掛載未完成),幫忙建 (只建 _Trash 不建 VIDEO_DIR,避免空殼)。
+ */
+function ensureTrashDir() {
+  try {
+    if (!fs.existsSync(VIDEO_DIR)) {
+      fs.mkdirSync(VIDEO_DIR, { recursive: true });
+      log('info', 'VIDEO_DIR 不存在, 已建立', { dir: VIDEO_DIR });
+    }
+    fs.mkdirSync(TRASH_DIR, { recursive: true });
+    log('info', 'TRASH_DIR 已就緒', { dir: TRASH_DIR });
+  } catch (err) {
+    log('warn', '建立 TRASH_DIR 失敗 (delete 功能會降級)', { err: err.message });
+  }
+}
+
 // ===== 啟動伺服器 =====
 // 啟動後持續監看 VIDEO_DIR，新增/移除 mp4 時自動重掃歌曲庫並廣播給前端。
 // 雙保險：
@@ -621,6 +840,7 @@ function startLibraryWatcher() {
 }
 
 startLibraryWatcher();
+ensureTrashDir();
 
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
@@ -633,6 +853,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  📱 手機端：  http://${displayHost}:${PORT}/mobile.html`);
   console.log(`  🔌 API：     http://localhost:${PORT}/api/songs`);
   console.log(`  📁 影片庫：  ${VIDEO_DIR}`);
+  console.log(`  🗑️  垃圾桶：  ${TRASH_DIR}  (主揪模式 PIN: ${HOST_PIN === '0000' ? '0000 (預設)' : '已自訂'})`);
   if (PIPELINE_API_URL) {
     console.log(`  🎬 Pipeline: ${PIPELINE_API_URL}`);
   } else {
