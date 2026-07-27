@@ -924,6 +924,11 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (playlist.some((s) => s.id === song.id)) {
+      socket.emit('error_message', { message: '這首歌已在待播清單中' });
+      return;
+    }
+
     const queuedSong = {
       ...song,
       addedBy: socket.id.substring(0, 6),
