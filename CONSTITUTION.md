@@ -147,24 +147,17 @@ user 已在 AskQuestion 表達意圖並選項 → **不要再列 Todo 重述同�
 
 > 後續歸納：例如「不得在 main 直接 push」「不得繞過 rollback.sh」等。
 
-### 5.5 部署前確認 + 容器更新（2026-07-27 新增）
+### 5.5 部署前確認 + 容器更新（2026-07-27）
 
 #### 部署前先截圖確認當前狀態
 改任何 UI 相關功能（`public/`）後，**部署前先在瀏覽器截圖確認按鈕/元件確實可見**。看不見就別 deploy——視覺確認比 logic review 更快發現問題。
 
-#### `ktv-brain` 容器內的程式碼不走 volume mount
-`ktv-brain` 是 `docker build` 出來的 image，靜態檔案燒在 `/app/public/` 裡。
-- **錯誤示範**：rsync 到 host 的 `/home/vibe/ktv-vod/public/`（容器根本讀不到）
-- **正確做法**：改 `public/` 後，必須 `docker cp` 進容器：
+#### `ktv-brain` 容器現在已支援 rsync 熱更新
+`docker-compose.yml` 已啟用 `./public:/app/public:ro`，rsync 到 host 後容器直接讀到，**無需 docker cp**：
 
 ```bash
-SSHPASS='05050505' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  public/mobile.js vibe@192.168.31.47:/tmp/mobile.js
-
-SSHPASS='05050505' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  vibe@192.168.31.47 \
-  "docker cp /tmp/mobile.js ktv-brain:/app/public/mobile.js"
+SSHPASS='05050505' rsync -avz \
+  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+  --checksum --exclude='.DS_Store' \
+  public/ vibe@192.168.31.47:/home/vibe/ktv-vod/public/
 ```
-
-#### 從源頭修復部署流程
-長遠應在 `docker-compose.yml` 裡加上 volume mount（把 host 的 `public/` 掛進容器），这样 rsync 才能真正生效。

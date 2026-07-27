@@ -35,8 +35,8 @@ services:
     volumes:
       # 影片資料來源 (處理完成的 mp4)
       - ktv-data:/ktv-data
-      # 即時熱更新 (開發模式可開, 正式建議移除)
-      # - ./public:/app/public:ro
+      # 即時熱更新：rsync 部署到 ./public/ 後容器直接讀到，無需 docker cp
+      - ./public:/app/public:ro
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
