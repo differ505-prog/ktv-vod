@@ -161,7 +161,8 @@
     /* 沉浸模式:隱藏「退出全螢幕」按鈕 (手機遙控即可離開,電視前不需要)
        + 縮小左上「KTV 播放端」標題到角落 (hover/連線異常時仍可見) */
     #immersiveBtn,
-    #systemTitle {
+    #systemTitle,
+    #standbyScreen {
       transition: opacity 0.6s ease, transform 0.6s ease;
     }
     body.immersive #immersiveBtn {
@@ -172,6 +173,11 @@
     body.immersive #systemTitle {
       opacity: 0.25;
       transform: scale(0.6);
+      pointer-events: none;
+    }
+    /* 沉浸模式下也淡出待機畫面,讓純粹沉浸觀影 */
+    body.immersive #standbyScreen {
+      opacity: 0;
       pointer-events: none;
     }
 
