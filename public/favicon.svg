@@ -1,24 +1,45 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e3a8a"/>
-      <stop offset="100%" stop-color="#7c3aed"/>
+      <stop offset="0%" stop-color="#ec4899"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
     </linearGradient>
     <linearGradient id="mic" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#fbbf24"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
+      <stop offset="0%" stop-color="#fce7f3"/>
+      <stop offset="100%" stop-color="#f9a8d4"/>
     </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
-  <rect width="100" height="100" rx="20" fill="url(#bg)"/>
-  <rect x="44" y="58" width="12" height="20" rx="3" fill="#9ca3af"/>
-  <ellipse cx="50" cy="40" rx="16" ry="20" fill="url(#mic)" stroke="#92400e" stroke-width="1.5"/>
-  <line x1="36" y1="35" x2="64" y2="35" stroke="#92400e" stroke-width="1" opacity="0.5"/>
-  <line x1="34" y1="42" x2="66" y2="42" stroke="#92400e" stroke-width="1" opacity="0.5"/>
-  <line x1="36" y1="49" x2="64" y2="49" stroke="#92400e" stroke-width="1" opacity="0.5"/>
-  <path d="M 26 40 Q 26 64 50 64 Q 74 64 74 40" stroke="#fbbf24" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <g transform="translate(72,18)">
-    <circle cx="0" cy="10" r="5" fill="#f472b6"/>
-    <rect x="4" y="-2" width="2" height="12" fill="#f472b6"/>
-    <path d="M 4 0 Q 12 0 12 6" stroke="#f472b6" stroke-width="2" fill="none"/>
+  <rect width="100" height="100" rx="22" fill="url(#bg)"/>
+  <g filter="url(#glow)">
+    <ellipse cx="50" cy="38" rx="14" ry="18" fill="url(#mic)" stroke="#fff" stroke-width="1.5" stroke-opacity="0.5"/>
+    <line x1="40" y1="32" x2="60" y2="32" stroke="#831843" stroke-width="1" opacity="0.4"/>
+    <line x1="38" y1="38" x2="62" y2="38" stroke="#831843" stroke-width="1" opacity="0.4"/>
+    <line x1="40" y1="44" x2="60" y2="44" stroke="#831843" stroke-width="1" opacity="0.4"/>
+    <rect x="45" y="54" width="10" height="18" rx="3" fill="#e5e7eb"/>
+    <path d="M 30 38 Q 30 62 50 62 Q 70 62 70 38" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.9"/>
+    <circle cx="50" cy="62" r="2.5" fill="#fff"/>
+  </g>
+  <g transform="translate(70,18)">
+    <circle cx="0" cy="8" r="3.5" fill="#fff"/>
+    <rect x="2.8" y="-2" width="1.5" height="10" fill="#fff"/>
+    <path d="M 2.8 -2 Q 10 -2 10 5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(20,72)" opacity="0.85">
+    <rect x="0" y="0" width="3" height="8" rx="1.5" fill="#fff">
+      <animate attributeName="height" values="3;8;4;6;3" dur="0.8s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="5" y="0" width="3" height="6" rx="1.5" fill="#fff">
+      <animate attributeName="height" values="6;3;7;4;6" dur="0.7s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="10" y="0" width="3" height="9" rx="1.5" fill="#fff">
+      <animate attributeName="height" values="4;9;5;7;4" dur="0.9s" repeatCount="indefinite"/>
+    </rect>
   </g>
 </svg>

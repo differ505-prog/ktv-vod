@@ -49,6 +49,9 @@ const PIPELINE_API_URL = process.env.PIPELINE_API_URL || '';
 const PIPELINE_API_TOKEN = process.env.PIPELINE_API_TOKEN || '';
 const DEMUCS_MODEL = process.env.DEMUCS_MODEL || 'htdemucs';
 const DEMUCS_FORCE_CPU = (process.env.DEMUCS_FORCE_CPU || 'false').toLowerCase() === 'true';
+// Pipeline 呼叫去重:同一 URL 在 N 秒內只送一次 (避免手機狂點)
+const PIPELINE_DEDUP_SECONDS = parseInt(process.env.PIPELINE_DEDUP_SECONDS || '60', 10);
+const recentPipelineCalls = new Map(); // url -> timestamp
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 // ===== 歌手白名單 =====
@@ -724,6 +727,25 @@ app.post('/api/process-youtube', async (req, res) => {
       success: false,
       error: 'Pipeline 服務未啟用 (請設定 PIPELINE_API_URL)',
     });
+  }
+
+  // 同 URL 短時間去重 (避免手機連點造成同時多發給 pipeline_server)
+  const lastCall = recentPipelineCalls.get(url);
+  const now = Date.now();
+  if (lastCall && now - lastCall < PIPELINE_DEDUP_SECONDS * 1000) {
+    const waitSec = Math.ceil((PIPELINE_DEDUP_SECONDS * 1000 - (now - lastCall)) / 1000);
+    return res.status(429).json({
+      success: false,
+      error: 'too_recent',
+      message: `此 URL ${waitSec}s 內已送過 pipeline,請稍候`,
+    });
+  }
+  recentPipelineCalls.set(url, now);
+  // 定期清理過期 (避免 map 膨脹)
+  if (recentPipelineCalls.size > 200) {
+    for (const [k, t] of recentPipelineCalls) {
+      if (now - t > PIPELINE_DEDUP_SECONDS * 1000 * 10) recentPipelineCalls.delete(k);
+    }
   }
 
   try {
