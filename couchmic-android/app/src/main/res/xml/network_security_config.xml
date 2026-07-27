@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  精準放行 cleartext：只開區網 + Tailscale IP 段。
+  不使用 android:usesCleartextTraffic 全域開關 — 避免弱化安全 posture。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- 區網 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">192.168.31.47</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>           <!-- Android emulator 對 host -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+
+    <!-- Tailscale CGNAT range (100.64.0.0/10) + MagicDNS .ts.net -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">100.64.0.0</domain>
+        <domain includeSubdomains="true">100.100.100.100</domain>  <!-- Tailscale MagicDNS -->
+        <domain includeSubdomains="true">ts.net</domain>
+    </domain-config>
+
+    <!-- mDNS 本地發現 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">local</domain>
+    </domain-config>
+</network-security-config>

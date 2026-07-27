@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CouchMic</string>
+    <string name="setup_title">CouchMic 連線設定</string>
+    <string name="setup_subtitle">請輸入 CouchMic 伺服器網址</string>
+    <string name="setup_hint">http://192.168.x.x:3001/tv.html</string>
+    <string name="setup_connect">連線</string>
+    <string name="setup_hint_mdns">提示：可用 mDNS 例如 http://couchmic.local:3001/tv.html</string>
+    <string name="setup_error_invalid">網址格式不正確（須含 http:// 與 /tv.html）</string>
+
+    <string name="main_loading">CouchMic 載入中…</string>
+    <string name="main_error_title">伺服器連線失敗</string>
+    <string name="main_error_action">返回設定</string>
+    <string name="main_retry">重試</string>
+
+    <string name="exit_kiosk_dialog_title">退出 CouchMic？</string>
+    <string name="exit_kiosk_dialog_msg">長按確認退出（單按取消）</string>
+    <string name="exit_kiosk_confirm">退出</string>
+    <string name="exit_kiosk_cancel">取消</string>
+
+    <string name="exit_pin_dialog_title">請輸入退出密碼</string>
+    <string name="exit_pin_dialog_msg">輸入 4 位數退出密碼（預設 1234）</string>
+
+    <string name="setup_exit_title">離開 CouchMic？</string>
+    <string name="setup_exit_msg">確認要關閉應用程式？</string>
+</resources>

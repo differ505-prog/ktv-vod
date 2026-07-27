@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Leanback banner：電視主畫面橫幅 320×180 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <path
+        android:fillColor="#0F0F14"
+        android:pathData="M0,0 L320,0 L320,180 L0,180 Z" />
+
+    <!-- 麥克風主體 -->
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M135,55 L185,55 Q195,55 195,65 L195,105 Q195,115 185,115 L135,115 Q125,115 125,105 L125,65 Q125,55 135,55 Z" />
+
+    <!-- 麥克風網點 -->
+    <path
+        android:fillColor="#F472B6"
+        android:pathData="M140,75 L150,75 L150,85 L140,85 Z M155,75 L165,75 L165,85 L155,85 Z M170,75 L180,75 L180,85 L170,85 Z M140,90 L150,90 L150,100 L140,100 Z M155,90 L165,90 L165,100 L155,100 Z M170,90 L180,90 L180,100 L170,100 Z" />
+
+    <!-- 麥克風支架 -->
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M205,85 Q205,125 160,125 Q115,125 115,85 L120,85 Q120,120 160,120 Q200,120 200,85 Z" />
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M158,125 L162,125 L162,140 L158,140 Z" />
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M140,140 L180,140 L180,145 L140,145 Z" />
+
+    <!-- EQ bar -->
+    <path
+        android:fillColor="#F472B6"
+        android:pathData="M55,90 L62,90 L62,100 L55,100 Z M70,80 L77,80 L77,110 L70,110 Z M85,85 L92,85 L92,105 L85,105 Z" />
+    <path
+        android:fillColor="#F472B6"
+        android:pathData="M228,90 L235,90 L235,100 L228,100 Z M243,80 L250,80 L250,110 L243,110 Z M258,85 L265,85 L265,105 L258,105 Z" />
+
+    <!-- 文字 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,160 L60,160 L60,164 L40,164 Z M65,160 L120,160 L120,164 L65,164 Z" />
+</vector>
