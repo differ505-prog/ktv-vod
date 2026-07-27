@@ -223,6 +223,8 @@
       btnHost.classList.add('border', 'border-green-500/30');
       // 把垃圾桶入口塞進待播佇列 tab 旁 (用 footer button 的方式)
       ensureTrashButton();
+      // 顯示歌曲庫刪除按鈕
+      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => btn.classList.remove('hidden'));
       // 重新渲染 now playing hint icon
       if (typeof renderNowPlaying === 'function') renderNowPlaying();
     } else {
@@ -230,6 +232,8 @@
       hostLabel.textContent = '主揪模式 (點擊解鎖)';
       btnHost.classList.remove('border', 'border-green-500/30');
       removeTrashButton();
+      // 隱藏歌曲庫刪除按鈕
+      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => btn.classList.add('hidden'));
       if (typeof renderNowPlaying === 'function') renderNowPlaying();
     }
   }
@@ -446,9 +450,11 @@ function renderNowPlaying() {
          <i class="fa-solid fa-trash-can text-sm"></i>
        </button>`;
     npTrashBtn.classList.remove('hidden');
+    console.log('[renderNowPlaying] 顯示刪除按鈕', { hostModeUnlocked, currentSong: !!currentSong, btnExists: !!document.getElementById('btnNpDelete') });
   } else {
     npTrashBtn.innerHTML = '';
     npTrashBtn.classList.add('hidden');
+    console.log('[renderNowPlaying] 隱藏刪除按鈕', { hostModeUnlocked, currentSong: !!currentSong });
   }
 
   npTitle.textContent = currentSong.title || '—';
@@ -511,8 +517,13 @@ function renderSongCard(song, opts = {}) {
 
   const actionHtml = action === 'queue'
     ? `<div class="text-[10px] text-gray-500"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
-    : `<div class="cyan-btn rounded-lg px-3 py-1.5 text-xs font-bold flex items-center gap-1 flex-shrink-0">
-         <i class="fa-solid fa-plus"></i> 點歌
+    : `<div class="flex items-center gap-1 flex-shrink-0">
+         <button class="delete-song-btn hidden text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲">
+           <i class="fa-solid fa-trash-can text-sm"></i>
+         </button>
+         <div class="cyan-btn rounded-lg px-3 py-1.5 text-xs font-bold flex items-center gap-1">
+           <i class="fa-solid fa-plus"></i> 點歌
+         </div>
        </div>`;
 
   li.innerHTML = `
@@ -800,84 +811,111 @@ function renderSongs() {
   }
   filtered.forEach((song) => {
     const li = renderSongCard(song, { action: 'pick' });
-    li.addEventListener('click', () => pickSong(song.id));
-    attachLibraryCardSwipe(li, song);
+    li.addEventListener('click', (e) => {
+      // 點到刪除按鈕不觸發點歌
+      if (e.target.closest('.delete-song-btn')) return;
+      pickSong(song.id);
+    });
+    // 刪除按鈕事件代理
+    const deleteBtn = li.querySelector('.delete-song-btn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!hostModeUnlocked) {
+          showToast('🔒 需主揪模式解鎖才能刪除', 'info');
+          return;
+        }
+        openDeleteConfirmModal(song);
+      });
+    }
+    attachLibraryCardLongPress(li, song);
     songList.appendChild(li);
   });
+  // 同步刪除按鈕顯示狀態
+  renderHostUI();
 }
 
 /**
- * 歌曲庫卡片的 swipe-to-permanent-delete
- * - 只在主揪模式解鎖時生效 (hostModeUnlocked)
- * - 沒解鎖時左滑到底直接被擋掉 (不會誤刪)
- * - 滑到底 (≤-140px) → 直接彈永久刪除 confirm modal
- *   (走的是與長按同一條路徑,UX 一致)
+ * 歌曲庫卡片的長按刪除（與佇列卡片一致）
+ * - 長按 600ms → 永久刪除確認 modal（需主揪模式）
+ * - 沒解鎖時震動提示
  */
-function attachLibraryCardSwipe(li, song) {
-  let startX = 0;
-  let dx = 0;
-  let sliding = false;
-  const SLIDE_DELETE_PX = 140;
+function attachLibraryCardLongPress(li, song) {
+  let pressStart = 0;
+  let pressX = 0;
+  let pressY = 0;
+  let wasLongPress = false;
 
-  const onDown = (e) => {
-    if (e.target.closest('button')) return;
-    const t = e.touches ? e.touches[0] : e;
-    startX = t.clientX;
-    dx = 0;
-    sliding = true;
-    li.style.transition = 'none';
-  };
-  const onMove = (e) => {
-    if (!sliding) return;
-    const t = e.touches ? e.touches[0] : e;
-    dx = t.clientX - startX;
-    // 紅色預覽: dx 越負,背景越紅
-    if (dx < 0) {
-      const intensity = Math.min(1, Math.abs(dx) / 160);
-      li.style.background = `rgba(239, 68, 68, ${intensity * 0.25})`;
+  const onPressStart = (e) => {
+    pressStart = Date.now();
+    wasLongPress = false;
+    if (e.touches) {
+      pressX = e.touches[0].clientX;
+      pressY = e.touches[0].clientY;
     }
-    const clamped = Math.max(-160, Math.min(0, dx));
-    li.style.transform = `translateX(${clamped}px)`;
   };
-  const onUp = () => {
-    if (!sliding) return;
-    sliding = false;
-    li.style.transition = 'transform 0.2s ease, background 0.2s ease';
-    if (dx <= -SLIDE_DELETE_PX) {
-      // 滑到底 → 觸發永久刪 modal (主揪模式限定)
+
+  const onPressMove = (e) => {
+    if (pressStart === 0 || !e.touches) return;
+    const dx = e.touches[0].clientX - pressX;
+    const dy = e.touches[0].clientY - pressY;
+    if (Math.sqrt(dx * dx + dy * dy) > 10) {
+      pressStart = 0;
+    }
+  };
+
+  const onPressEnd = () => {
+    if (pressStart === 0) return;
+    const elapsed = Date.now() - pressStart;
+    if (elapsed >= 600) {
+      wasLongPress = true;
+      if ('vibrate' in navigator) navigator.vibrate(40);
       if (!hostModeUnlocked) {
-        // 沒解鎖: 拒絕 + 提示 (UX 友善,不解鎖到主揪按鈕)
-        li.style.transform = 'translateX(0)';
-        li.style.background = '';
-        if ('vibrate' in navigator) navigator.vibrate(60);
-        showToast('🔒 滑動刪除需要主揪模式,點下方「主揪模式」解鎖', 'error');
-        return;
+        showToast('🔒 需主揪模式解鎖才能刪除', 'info');
+      } else {
+        openDeleteConfirmModal(song);
       }
-      li.style.transform = 'translateX(-100%)';
-      setTimeout(() => {
-        pendingDeleteSongId = song.id;
-        deleteSongTitle.textContent = song.title;
-        deleteModal.classList.remove('hidden');
-        // 不要把 li 移走,使用者可能按取消,卡片位置不對會很怪
-        // 反正刪除確認後 server 會 broadcast library_updated,前端會重 render
-        li.style.transform = 'translateX(0)';
-        li.style.background = '';
-      }, 180);
-    } else {
-      // 沒過門檻,彈回
-      li.style.transform = 'translateX(0)';
-      li.style.background = '';
     }
-    dx = 0;
+    pressStart = 0;
   };
 
-  li.addEventListener('touchstart', onDown, { passive: true });
-  li.addEventListener('touchmove', onMove, { passive: true });
-  li.addEventListener('touchend', onUp);
-  li.addEventListener('mousedown', onDown);
-  li.addEventListener('mousemove', onMove);
-  li.addEventListener('mouseup', onUp);
-  li.addEventListener('mouseleave', onUp);
+  li.addEventListener('touchstart', onPressStart, { passive: true });
+  li.addEventListener('touchmove', onPressMove, { passive: true });
+  li.addEventListener('touchend', onPressEnd);
+  li.addEventListener('touchcancel', onPressEnd);
+
+  // 阻止長按後觸發的 click
+  li.addEventListener('click', (e) => {
+    if (wasLongPress) {
+      e.stopImmediatePropagation();
+      wasLongPress = false;
+    }
+  }, true); // capture phase
+
+  // 桌面端：mousedown + 600ms setTimeout
+  let mouseTimer = null;
+  li.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    pressStart = Date.now();
+    wasLongPress = false;
+    mouseTimer = setTimeout(() => {
+      wasLongPress = true;
+      if ('vibrate' in navigator) navigator.vibrate(40);
+      if (!hostModeUnlocked) {
+        showToast('🔒 需主揪模式解鎖才能刪除', 'info');
+      } else {
+        openDeleteConfirmModal(song);
+      }
+    }, 600);
+  });
+  li.addEventListener('mouseup', () => {
+    clearTimeout(mouseTimer);
+    pressStart = 0;
+  });
+  li.addEventListener('mouseleave', () => {
+    clearTimeout(mouseTimer);
+    pressStart = 0;
+  });
 }
 
   function escapeHtml(s) {
