@@ -17,7 +17,7 @@
   const npCover = document.getElementById('npCover');
   const npMode = document.getElementById('npMode');
   const npQueue = document.getElementById('npQueue');
-  const npTrashHint = document.getElementById('npTrashHint');
+  const npTrashBtn = document.getElementById('npTrashBtn');
   const btnSkip = document.getElementById('btnSkip');
   const btnVocal = document.getElementById('btnVocal');
   const btnImmersive = document.getElementById('btnImmersive');
@@ -440,8 +440,10 @@ function renderNowPlaying() {
     return;
   }
 
-  npTrashHint.innerHTML = hostModeUnlocked
-    ? '<div class="w-6 h-6 rounded-full bg-red-500/20 text-red-300 flex items-center justify-center text-[10px]" title="長按可永久刪除"><i class="fa-solid fa-trash-can"></i></div>'
+  npTrashBtn.innerHTML = hostModeUnlocked && currentSong
+    ? `<button id="btnNpDelete" class="w-8 h-8 rounded-full bg-red-500/20 text-red-300 hover:bg-red-500/40 flex items-center justify-center transition active:scale-90" title="刪除這首歌">
+         <i class="fa-solid fa-trash-can text-sm"></i>
+       </button>`
     : '';
 
   npTitle.textContent = currentSong.title || '—';
@@ -1160,6 +1162,19 @@ function attachLibraryCardSwipe(li, song) {
       document.querySelectorAll('.tab-panel').forEach((p) => p.classList.add('hidden'));
       document.getElementById(`tab-${target}`).classList.remove('hidden');
     });
+  });
+
+  // ===== 正在播放快速刪除按鈕 =====
+  // 事件代理：點擊右上角刪除 icon → 直接彈確認 modal
+  nowPlayingCard.addEventListener('click', (e) => {
+    const btn = e.target.closest('#btnNpDelete');
+    if (!btn) return;
+    e.stopPropagation();
+    if (!hostModeUnlocked) {
+      showToast('🔒 需主揪模式解鎖才能刪除', 'info');
+      return;
+    }
+    openDeleteConfirmModal(currentSong);
   });
 
   // ===== 設定 Modal =====

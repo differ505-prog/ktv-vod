@@ -410,6 +410,15 @@ app.post('/api/songs/delete', (req, res) => {
     return res.status(404).json({ success: false, error: '找不到這首歌' });
   }
 
+  // 如果刪的是正在播放的歌曲 → 先切歌（停止播放並 advance）
+  if (currentSong && currentSong.id === songId) {
+    io.emit('stop_song');
+    songHistory.push(currentSong);
+    if (songHistory.length > 50) songHistory.shift();
+    advanceToNextSong(true);
+    log('info', '刪除正在播放的歌曲,已自動切歌', { songId });
+  }
+
   // 計算實體檔案路徑 (src 是 URL,要還原到 VIDEO_DIR 的 basename)
   // 重要:pathname 會做 percent-encoding,但中文檔名磁碟上是 raw UTF-8
   //   所以需要 decodeURIComponent 才能對到實際檔案
