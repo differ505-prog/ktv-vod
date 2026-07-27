@@ -37,12 +37,14 @@ ssh "${SSH_OPTS[@]}" "$NAS_HOST" \
   "docker cp /home/vibe/ktv-vod/server.js ktv-brain:/app/server.js && docker restart ktv-brain"
 ```
 
-**public/ 部署流程**：
+**public/ 部署流程**（container 內 `/app/public/` 沒有 volume mount，必須 docker cp）：
 ```bash
-SSHPASS='05050505' rsync -avz \
-  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
-  --checksum --exclude='.DS_Store' \
-  public/ vibe@192.168.31.47:/home/vibe/ktv-vod/public/
+SSHPASS='05050505' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  public/mobile.js vibe@192.168.31.47:/tmp/mobile.js
+
+SSHPASS='05050505' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  vibe@192.168.31.47 \
+  "docker cp /tmp/mobile.js ktv-brain:/app/public/mobile.js"
 ```
 
 **例外**: 純本地測試 / 改 `*.md` / user 明示「先不要部署」
@@ -87,3 +89,9 @@ user 已在 AskQuestion 表達意圖並選項 → 直接做。
 
 ### b9. 不要在同一個對話中重複示範同一個新規則
 新規則寫完就停下來。**不要**「既然寫了規則，順便示範一次執行」。
+
+### b10. 部署前截圖確認視覺效果
+改 `public/` UI 元件後，**先截圖確認按鈕/元件在瀏覽器裡真的可見，再部署**。
+視覺確認比 logic review 更快速發現問題。browser snapshot 和截圖同時用：
+- `browser_take_screenshot` — 視覺最終確認
+- `browser_snapshot` — 結構快速確認（refs 可用來點擊）
