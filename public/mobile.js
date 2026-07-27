@@ -978,11 +978,7 @@ function attachLibraryCardLongPress(li, song) {
     mouseTimer = setTimeout(() => {
       wasLongPress = true;
       if ('vibrate' in navigator) navigator.vibrate(40);
-      if (!hostModeUnlocked) {
-        showToast('🔒 需主揪模式解鎖才能刪除', 'info');
-      } else {
-        openDeleteConfirmModal(song);
-      }
+      openFixArtistModal(song);
     }, 600);
   });
   li.addEventListener('mouseup', () => {
