@@ -91,8 +91,9 @@ class SetupActivity : AppCompatActivity() {
     }
 
     companion object {
-        // 預設 URL：mDNS 為主（支援 Tailscale / 自架 NAS），備援為自家 IP
-        const val DEFAULT_URL = "http://couchmic.local:3001/tv.html"
+        // 預設走外網 Funnel（朋友家可連，永久網址）
+        // 備援為自家區網 IP（你家用，比較快）
+        const val DEFAULT_URL = "https://vibe-nas.taila67710.ts.net/tv.html"
         const val FALLBACK_IP = "http://192.168.31.47:3001/tv.html"
     }
 }
