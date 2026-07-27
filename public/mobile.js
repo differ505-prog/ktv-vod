@@ -613,37 +613,42 @@ function attachQueueCardGestures(li, song, idx) {
   li.addEventListener('mouseleave', onUp);
 
   // ---- 長按 (永久刪除入口) ----
-  let pressTimer = null;
-  let longPressed = false;
-  const startPress = () => {
-    longPressed = false;
-    pressTimer = setTimeout(() => {
-      longPressed = true;
-      // 視覺提示
-      if ('vibrate' in navigator) navigator.vibrate(40);
-      // 主揪模式沒解鎖 → 提示但不彈 modal (防誤觸 + UX 友善)
-      if (!hostModeUnlocked) {
-        showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
-        return;
-      }
-      // 主揪模式已解鎖 → 永久刪除 confirm
-      openDeleteConfirmModal(song);
-    }, 600);
-  };
-  const cancelPress = () => {
-    if (pressTimer) clearTimeout(pressTimer);
-    pressTimer = null;
-    // 若已經觸發 long press → 阻擋 click 事件
-    if (longPressed) {
-      li.addEventListener('click', (e) => e.stopPropagation(), { once: true });
+  // 用 Date.now() + 座標移動判斷，不受 scroll 影響
+  let qPressStart = 0;
+  let qPressX = 0;
+  let qPressY = 0;
+  const onPressStart = (e) => {
+    qPressStart = Date.now();
+    if (e.touches) {
+      qPressX = e.touches[0].clientX;
+      qPressY = e.touches[0].clientY;
     }
   };
-  li.addEventListener('touchstart', startPress);
-  li.addEventListener('touchend', cancelPress);
-  li.addEventListener('touchcancel', cancelPress);
-  li.addEventListener('mousedown', startPress);
-  li.addEventListener('mouseup', cancelPress);
-  li.addEventListener('mouseleave', cancelPress);
+  const onPressMove = (e) => {
+    if (qPressStart === 0 || !e.touches) return;
+    const dx = e.touches[0].clientX - qPressX;
+    const dy = e.touches[0].clientY - qPressY;
+    if (Math.sqrt(dx * dx + dy * dy) > 10) qPressStart = 0;
+  };
+  const onPressEnd = () => {
+    if (qPressStart === 0) return;
+    const held = Date.now() - qPressStart;
+    qPressStart = 0;
+    if (held < 600) return;
+    if ('vibrate' in navigator) navigator.vibrate(40);
+    if (!hostModeUnlocked) {
+      showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
+      return;
+    }
+    openDeleteConfirmModal(song);
+  };
+  li.addEventListener('touchstart', onPressStart, { passive: true });
+  li.addEventListener('touchmove', onPressMove, { passive: true });
+  li.addEventListener('touchend', onPressEnd);
+  li.addEventListener('touchcancel', onPressEnd);
+  li.addEventListener('mousedown', onPressStart);
+  li.addEventListener('mouseup', onPressEnd);
+  li.addEventListener('mouseleave', onPressEnd);
 }
 
 async function removeFromQueue(position, song) {
@@ -673,69 +678,81 @@ function openDeleteConfirmModal(song) {
  * 給「正在播放」卡片綁定長按手勢 → 永久刪除入口
  * - 每次 renderNowPlaying 有 currentSong 時呼叫
  * - 沒解鎖主揪模式時只震動 + 提示，與 queue 卡片一致
- * - 長按 600ms 觸發；按鈕泡泡事件留給原本的 click
+ * - 用 Date.now() 判斷是否真的長按（不受 scroll/滑動影響）
  */
-let npPressTimer = null;
-let npPressed = false;
+let npPressStart = 0;
+let npPressX = 0;
+let npPressY = 0;
+let npLongPressed = false;
 
 function attachNowPlayingLongPress() {
   const card = nowPlayingCard;
   if (!card) return;
 
-  // 移除舊監聽（防止反覆呼叫疊加）
   card.removeEventListener('touchstart', _npStartPress);
-  card.removeEventListener('touchend', _npCancelPress);
-  card.removeEventListener('touchcancel', _npCancelPress);
+  card.removeEventListener('touchmove', _npMovePress);
+  card.removeEventListener('touchend', _npEndPress);
+  card.removeEventListener('touchcancel', _npEndPress);
   card.removeEventListener('mousedown', _npStartPress);
-  card.removeEventListener('mouseup', _npCancelPress);
-  card.removeEventListener('mouseleave', _npCancelPress);
+  card.removeEventListener('mouseup', _npEndPress);
+  card.removeEventListener('mouseleave', _npEndPress);
 
   card.addEventListener('touchstart', _npStartPress, { passive: true });
-  card.addEventListener('touchend', _npCancelPress);
-  card.addEventListener('touchcancel', _npCancelPress);
+  card.addEventListener('touchmove', _npMovePress, { passive: true });
+  card.addEventListener('touchend', _npEndPress);
+  card.addEventListener('touchcancel', _npEndPress);
   card.addEventListener('mousedown', _npStartPress);
-  card.addEventListener('mouseup', _npCancelPress);
-  card.addEventListener('mouseleave', _npCancelPress);
+  card.addEventListener('mouseup', _npEndPress);
+  card.addEventListener('mouseleave', _npEndPress);
 }
 
 function _npStartPress(e) {
   if (e.target.closest('button, a, input, select, textarea')) return;
-  npPressed = false;
-  npPressTimer = setTimeout(() => {
-    npPressed = true;
-    if ('vibrate' in navigator) navigator.vibrate(40);
-    if (!hostModeUnlocked) {
-      showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
-      return;
-    }
-    if (!currentSong) return;
-    // 視覺脈衝確認長按被認定
-    nowPlayingCard.classList.add('np-hold-pulse');
-    setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
-    openDeleteConfirmModal(currentSong);
-  }, 600);
-}
-
-function _npCancelPress() {
-  if (npPressTimer) clearTimeout(npPressTimer);
-  npPressTimer = null;
-  if (npPressed) {
-    nowPlayingCard.addEventListener('click', (ev) => ev.stopPropagation(), { once: true });
+  npPressStart = Date.now();
+  npLongPressed = false;
+  if (e.touches) {
+    npPressX = e.touches[0].clientX;
+    npPressY = e.touches[0].clientY;
   }
 }
 
+function _npMovePress(e) {
+  if (npPressStart === 0 || !e.touches) return;
+  const dx = e.touches[0].clientX - npPressX;
+  const dy = e.touches[0].clientY - npPressY;
+  if (Math.sqrt(dx * dx + dy * dy) > 10) npPressStart = 0; // 移動超標，取消長按
+}
+
+function _npEndPress() {
+  if (npPressStart === 0) return;
+  const held = Date.now() - npPressStart;
+  npPressStart = 0;
+  if (held < 600) return; // 不到 600ms 當成一般 tap
+
+  npLongPressed = true;
+  if ('vibrate' in navigator) navigator.vibrate(40);
+  if (!hostModeUnlocked) {
+    showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
+    return;
+  }
+  if (!currentSong) return;
+  nowPlayingCard.classList.add('np-hold-pulse');
+  setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
+  openDeleteConfirmModal(currentSong);
+}
+
 function detachNowPlayingLongPress() {
-  if (npPressTimer) clearTimeout(npPressTimer);
-  npPressTimer = null;
-  npPressed = false;
+  npPressStart = 0;
+  npLongPressed = false;
   const card = nowPlayingCard;
   if (card) {
     card.removeEventListener('touchstart', _npStartPress);
-    card.removeEventListener('touchend', _npCancelPress);
-    card.removeEventListener('touchcancel', _npCancelPress);
+    card.removeEventListener('touchmove', _npMovePress);
+    card.removeEventListener('touchend', _npEndPress);
+    card.removeEventListener('touchcancel', _npEndPress);
     card.removeEventListener('mousedown', _npStartPress);
-    card.removeEventListener('mouseup', _npCancelPress);
-    card.removeEventListener('mouseleave', _npCancelPress);
+    card.removeEventListener('mouseup', _npEndPress);
+    card.removeEventListener('mouseleave', _npEndPress);
   }
 }
 
