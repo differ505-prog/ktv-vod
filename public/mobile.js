@@ -714,30 +714,37 @@ function _npStartPress(e) {
     npPressX = e.touches[0].clientX;
     npPressY = e.touches[0].clientY;
   }
+  console.log('[LP] touchstart', npPressStart, 'target:', e.target.tagName, e.target.className);
 }
 
 function _npMovePress(e) {
   if (npPressStart === 0 || !e.touches) return;
   const dx = e.touches[0].clientX - npPressX;
   const dy = e.touches[0].clientY - npPressY;
-  if (Math.sqrt(dx * dx + dy * dy) > 10) npPressStart = 0; // 移動超標，取消長按
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  console.log('[LP] touchmove dist:', dist.toFixed(1), '→', dist > 10 ? 'CANCELLED' : 'ok');
+  if (dist > 10) npPressStart = 0;
 }
 
 function _npEndPress() {
+  console.log('[LP] touchend, npPressStart:', npPressStart);
   if (npPressStart === 0) return;
   const held = Date.now() - npPressStart;
+  console.log('[LP] held:', held + 'ms', held < 600 ? '→ ignored (<600ms)' : '→ TRIGGER!');
   npPressStart = 0;
-  if (held < 600) return; // 不到 600ms 當成一般 tap
+  if (held < 600) return;
 
   npLongPressed = true;
   if ('vibrate' in navigator) navigator.vibrate(40);
   if (!hostModeUnlocked) {
+    console.log('[LP] → show toast (not unlocked)');
     showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
     return;
   }
-  if (!currentSong) return;
+  if (!currentSong) { console.log('[LP] no currentSong'); return; }
   nowPlayingCard.classList.add('np-hold-pulse');
   setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
+  console.log('[LP] → openDeleteConfirmModal!');
   openDeleteConfirmModal(currentSong);
 }
 
