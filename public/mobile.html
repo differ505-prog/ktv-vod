@@ -490,6 +490,32 @@
     </div>
   </div>
 
+  <!-- 改名 / 改歌手 Modal（長按佇列/正在播放觸發） -->
+  <div id="editSongModal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-edit-song></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-5 w-full max-w-md border border-pink-400/30 flex flex-col">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-base"><i class="fa-solid fa-pen text-pink-400"></i> 修改歌曲資訊</h3>
+          <button data-close-edit-song class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div id="editSongInfo" class="text-gray-400 text-xs mb-3 truncate"></div>
+        <label class="text-xs text-gray-400 mb-1">歌名</label>
+        <input id="inputEditTitle" type="text" placeholder="歌名"
+          class="w-full rounded-xl bg-white/10 border border-white/20 px-4 py-3 text-white text-base placeholder-gray-500 focus:outline-none focus:border-pink-400 mb-3" />
+        <label class="text-xs text-gray-400 mb-1">歌手</label>
+        <input id="inputEditArtist" type="text" placeholder="歌手"
+          class="w-full rounded-xl bg-white/10 border border-white/20 px-4 py-3 text-white text-base placeholder-gray-500 focus:outline-none focus:border-pink-400 mb-4" />
+        <div class="flex gap-2">
+          <button id="btnCancelEditSong" class="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-sm transition">取消</button>
+          <button id="btnConfirmEditSong" class="flex-1 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-black text-sm font-bold transition">儲存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Cache-busting: 部署時間戳,讓 user 不必手動 Ctrl+Shift+R
     // 用 document.write 同步替換 src,避免 race

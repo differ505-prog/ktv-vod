@@ -964,6 +964,48 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 改名 / 改歌手（只更新記憶體中的 song 物件，不改檔名/不寫硬碟）
+  // 同時更新 playlist 中的相同 id、currentSong、SONG_LIBRARY、songHistory
+  socket.on('edit_song', ({ id, title, artist }) => {
+    if (!id) return;
+    const cleanTitle = typeof title === 'string' ? title.trim().slice(0, 100) : null;
+    const cleanArtist = typeof artist === 'string' ? artist.trim().slice(0, 50) : null;
+    if (!cleanTitle && !cleanArtist) return;
+
+    const apply = (s) => {
+      if (!s || s.id !== id) return false;
+      if (cleanTitle) s.title = cleanTitle;
+      if (cleanArtist) s.artist = cleanArtist;
+      return true;
+    };
+
+    let changed = false;
+    if (currentSong && apply(currentSong)) {
+      io.emit('play_song', { currentSong });
+      changed = true;
+    }
+    for (const s of playlist) {
+      if (apply(s)) changed = true;
+    }
+    for (const s of SONG_LIBRARY) {
+      if (apply(s)) changed = true;
+    }
+    for (const s of songHistory) {
+      if (apply(s)) changed = true;
+    }
+
+    if (!changed) {
+      log('warn', 'edit_song 找不到目標', { id });
+      return;
+    }
+
+    log('info', '改名/改歌手', { id, title: cleanTitle, artist: cleanArtist });
+    io.emit('playlist_updated', {
+      playlist: [...playlist],
+      currentSong,
+    });
+  });
+
   socket.on('skip_song', () => {
     if (!currentSong && playlist.length === 0) return;
     log('info', '切歌指令', { from: socket.id });

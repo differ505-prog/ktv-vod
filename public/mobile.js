@@ -64,6 +64,13 @@
   const fixArtistModal = document.getElementById('fixArtistModal');
   const fixArtistSongInfo = document.getElementById('fixArtistSongInfo');
   const inputFixArtist = document.getElementById('inputFixArtist');
+  // 改名 / 改歌手 modal
+  const editSongModal = document.getElementById('editSongModal');
+  const editSongInfo = document.getElementById('editSongInfo');
+  const inputEditTitle = document.getElementById('inputEditTitle');
+  const inputEditArtist = document.getElementById('inputEditArtist');
+  const btnConfirmEditSong = document.getElementById('btnConfirmEditSong');
+  const btnCancelEditSong = document.getElementById('btnCancelEditSong');
 
   // ===== 狀態 =====
   let songs = [];       // 歌曲庫
@@ -700,11 +707,7 @@ function attachQueueCardGestures(li, song, idx) {
     qPressStart = 0;
     if (held < 600) return;
     if ('vibrate' in navigator) navigator.vibrate(40);
-    if (!hostModeUnlocked) {
-      showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
-      return;
-    }
-    openDeleteConfirmModal(song);
+    openEditSongModal(song);
   };
   li.addEventListener('touchstart', onPressStart, { passive: true });
   li.addEventListener('touchmove', onPressMove, { passive: true });
@@ -752,6 +755,51 @@ function closeFixArtistModal() {
   fixArtistModal.classList.add('hidden');
   _fixArtistSong = null;
 }
+
+let _editSongTarget = null;
+
+function openEditSongModal(song) {
+  if (!song) return;
+  _editSongTarget = song;
+  editSongInfo.textContent = `id: ${song.id}`;
+  inputEditTitle.value = song.title || '';
+  inputEditArtist.value = song.artist || '';
+  editSongModal.classList.remove('hidden');
+  setTimeout(() => inputEditTitle.focus(), 200);
+}
+
+function closeEditSongModal() {
+  editSongModal.classList.add('hidden');
+  _editSongTarget = null;
+}
+
+function confirmEditSong() {
+  const song = _editSongTarget;
+  if (!song) return;
+  const newTitle = inputEditTitle.value.trim();
+  const newArtist = inputEditArtist.value.trim();
+  if (!newTitle && !newArtist) {
+    showToast('至少填一個欄位', 'info');
+    return;
+  }
+  const payload = { id: song.id };
+  if (newTitle) payload.title = newTitle;
+  if (newArtist) payload.artist = newArtist;
+  socket.emit('edit_song', payload);
+  // 本地立即更新,避免 server 廣播延遲
+  if (newTitle) song.title = newTitle;
+  if (newArtist) song.artist = newArtist;
+  showToast('已修改', 'success');
+  closeEditSongModal();
+  renderQueue();
+  renderNowPlaying();
+}
+
+btnConfirmEditSong.addEventListener('click', confirmEditSong);
+btnCancelEditSong.addEventListener('click', closeEditSongModal);
+document.querySelectorAll('[data-close-edit-song]').forEach((el) => {
+  el.addEventListener('click', closeEditSongModal);
+});
 
 async function confirmFixArtist() {
   const newArtist = inputFixArtist.value.trim();
@@ -837,16 +885,11 @@ function _npEndPress() {
 
   npLongPressed = true;
   if ('vibrate' in navigator) navigator.vibrate(40);
-  if (!hostModeUnlocked) {
-    console.log('[LP] → toast (locked)');
-    showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
-    return;
-  }
   if (!currentSong) { console.log('[LP] no song'); return; }
   nowPlayingCard.classList.add('np-hold-pulse');
   setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
-  console.log('[LP] → openDeleteConfirmModal!');
-  openDeleteConfirmModal(currentSong);
+  console.log('[LP] → openEditSongModal!');
+  openEditSongModal(currentSong);
 }
 
 function detachNowPlayingLongPress() {
