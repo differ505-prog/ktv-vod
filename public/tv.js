@@ -589,13 +589,10 @@ async function unlockAudioPlayback() {
   document.addEventListener('webkitfullscreenchange', onFsChange);
 
   function updateImmersiveBtnUI() {
-    if (immersive) {
-      immersiveBtnLabel.textContent = '退出全螢幕';
-      immersiveIcon.className = 'fa-solid fa-compress text-pink-400';
-    } else {
-      immersiveBtnLabel.textContent = '全螢幕';
-      immersiveIcon.className = 'fa-solid fa-expand text-pink-400';
-    }
+    // 按鈕固定顯示「全螢幕」一個狀態 — immersive 模式時按鈕整個被 CSS 隱藏,
+    // 所以永遠不會出現「退出」狀態。user 用手機遙控即可退出。
+    immersiveBtnLabel.textContent = '全螢幕';
+    immersiveIcon.className = 'fa-solid fa-expand text-pink-400';
   }
 
   function showImmersiveDialog() {

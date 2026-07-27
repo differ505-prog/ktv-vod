@@ -6,7 +6,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
   <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg?v=3" />
   <link rel="apple-touch-icon" href="/favicon.svg?v=3" />
-  <title>🎤 KTV - 電視播放端</title>
+  <title>🎤 CouchMic — TV 播放端</title>
 
   <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -158,8 +158,8 @@
       pointer-events: auto;
     }
 
-    /* 沉浸模式:隱藏「退出全螢幕」按鈕 (手機遙控即可離開,電視前不需要)
-       + 縮小左上「KTV 播放端」標題到角落 (hover/連線異常時仍可見) */
+    /* 沉浸模式:隱藏「全螢幕」按鈕 (沉浸時看不見也無需退出,手機遙控即可離開)
+       + 縮小左上「CouchMic · 播放端」標題到角落 (hover/連線異常時仍可見) */
     #immersiveBtn,
     #systemTitle,
     #standbyScreen {
@@ -224,7 +224,7 @@
   <div id="systemTitle" class="fixed top-4 left-4 panel rounded-xl px-4 py-2 flex items-center gap-3 z-10">
     <div class="pulse-ring w-2.5 h-2.5 rounded-full status-dot"></div>
     <span class="font-bold tracking-wider text-sm">
-      <i class="fa-solid fa-tv text-pink-400"></i> KTV 播放端
+      <i class="fa-solid fa-tv text-pink-400"></i> CouchMic <span class="text-gray-400 font-normal">· 播放端</span>
     </span>
   </div>
 
@@ -260,6 +260,7 @@
     <div class="text-center">
       <div class="text-7xl mb-6 standby-emoji">🎤</div>
       <h1 class="text-5xl font-bold glow-text mb-3">KTV 點歌系統</h1>
+      <p class="text-pink-300 text-sm font-medium tracking-widest mb-4">POWERED BY COUCHMIC</p>
       <p class="text-gray-400 mt-2 text-lg">手機掃描右下角 QR Code 即可加入點歌行列</p>
     </div>
   </div>
@@ -276,7 +277,7 @@
   <div id="immersiveDialog" class="hidden fixed inset-0 z-40 bg-black/70 backdrop-blur-md flex items-center justify-center">
     <div class="panel panel-glow rounded-3xl p-8 max-w-md text-center">
       <div class="text-6xl mb-4 standby-emoji">📺</div>
-      <h2 class="text-2xl font-bold glow-text mb-3">手機請求全螢幕</h2>
+      <h2 class="text-2xl font-bold glow-text mb-3">CouchMic 全螢幕模式</h2>
       <p class="text-gray-300 text-sm leading-relaxed mb-6">
         瀏覽器需要你點一下按鈕才能進入全螢幕。<br/>
         按下方按鈕即可進入觀影模式。
