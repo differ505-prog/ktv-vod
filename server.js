@@ -946,9 +946,17 @@ io.on('connection', (socket) => {
       addedBy: queuedSong.addedBy,
     });
 
-    if (!currentSong) {
+    const isAutoSong = !currentSong || currentSong.addedBy === 'Auto';
+    if (isAutoSong) {
+      // 系統自動選的歌 → 立刻切到新佇列歌曲
+      io.emit('stop_song');
+      if (currentSong) {
+        songHistory.push(currentSong);
+        if (songHistory.length > 50) songHistory.shift();
+      }
       advanceToNextSong();
     } else {
+      // 用戶手動點的歌 → 只排進佇列，不打斷
       io.emit('playlist_updated', {
         playlist: [...playlist],
         currentSong,
