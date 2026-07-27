@@ -20,11 +20,24 @@ alwaysApply: true
 
 | 改動範圍 | 部署方式 |
 |---|---|
-| 只改 `public/`、`server.js`、`pipeline_server.js` | rsync 到 NAS (見下) |
+| 只改 `public/` | rsync 到 NAS (見下) |
+| 改 `server.js` | rsync + docker cp + 重啟 container |
+| 改 `pipeline_server.js` | rsync 到 NAS |
 | 改 `ktv-pipeline/` | `bash ktv-pipeline/deploy_via_ssh.sh ktv-pipeline` |
-| 改 `server.js` | rsync + SSH 重啟 `ktv-brain` container |
 | 部署失敗 | `bash ktv-pipeline/rollback.sh` |
 
+**server.js 部署流程**（因 container 內沒有 volume mount /app 目錄）：
+```bash
+SSHPASS='05050505'
+rsync -avz \
+  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+  --checksum --exclude='.DS_Store' \
+  server.js vibe@192.168.31.47:/home/vibe/ktv-vod/
+ssh "${SSH_OPTS[@]}" "$NAS_HOST" \
+  "docker cp /home/vibe/ktv-vod/server.js ktv-brain:/app/server.js && docker restart ktv-brain"
+```
+
+**public/ 部署流程**：
 ```bash
 SSHPASS='05050505' rsync -avz \
   -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \

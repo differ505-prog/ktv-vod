@@ -388,12 +388,13 @@ app.post('/api/songs/remove-from-queue', (req, res) => {
  * 第 2 + 3 層: 主揪模式 + 軟刪除 — 移到 _Trash 資料夾,不 fs.unlink。
  *
  * POST /api/songs/delete
- * Body: { songId: 'song-003', hostPin: '0000' }
+ * Body: { songId: 'song-003', hostPin: '0000', force: true }
  *
  * - src / srcVocalOff 都移走 (避免變成「唱原唱時還是舊檔」)
  * - hostPin 錯 → 401 (就算前端藏好,後端也要驗)
  * - 錯誤時的 cleanup: 若只 mv 成功一個檔,另一個還在原位 → 不要讓使用者以為刪乾淨
  *   所以先確認所有來源檔都存在,再一次性 mv
+ * - force=true: 檔案不存在時仍刪除資料庫記錄（用於清理孤立的歌曲記錄）
  */
 app.post('/api/songs/delete', (req, res) => {
   const songId = req.body?.songId;
@@ -443,24 +444,34 @@ app.post('/api/songs/delete', (req, res) => {
   }
 
   // 防呆 2: 先確認所有來源檔都存在, 任一缺失就拒絕 (避免半刪狀態)
+  // 但若明確指定 force=true，則允許純資料庫刪除（檔案可能已被外部搬走）
+  const forceDelete = req.body?.force === true;
+  const missingFiles = [];
   for (const s of sources) {
     if (!fs.existsSync(s.abs)) {
-      log('warn', 'delete 拒絕: 來源檔不存在', { songId, role: s.role, file: s.abs });
-      return res.status(400).json({
-        success: false,
-        error: `來源檔不存在: ${s.fileName} (可能已被搬走?)`,
-      });
+      missingFiles.push(s.fileName);
     }
   }
+  if (missingFiles.length > 0 && !forceDelete) {
+    log('warn', 'delete 拒絕: 來源檔不存在', { songId, files: missingFiles });
+    return res.status(400).json({
+      success: false,
+      error: `來源檔不存在: ${missingFiles.join(', ')} (可能已被搬走?)`,
+    });
+  }
+  if (missingFiles.length > 0) {
+    log('warn', 'force delete: 檔案已不存在,僅移除資料庫記錄', { songId, files: missingFiles });
+  }
 
-  // 執行 mv
+  // 執行 mv（僅存在的檔案）
   try {
     for (const s of sources) {
-      fs.renameSync(s.abs, path.join(TRASH_DIR, s.trashName));
-      log('info', 'soft delete', { from: s.abs, to: s.trashName });
+      if (fs.existsSync(s.abs)) {
+        fs.renameSync(s.abs, path.join(TRASH_DIR, s.trashName));
+        log('info', 'soft delete', { from: s.abs, to: s.trashName });
+      }
     }
   } catch (err) {
-    // 已 mv 出去的無法自動復原 (只能手動從 trash 撿回)
     log('error', 'soft delete 部分失敗,需手動復原', { err: err.message });
     return res.status(500).json({
       success: false,
@@ -470,6 +481,7 @@ app.post('/api/songs/delete', (req, res) => {
 
   // 從 SONG_LIBRARY 移除 (frontend 不用再過濾,但保持乾淨)
   SONG_LIBRARY = SONG_LIBRARY.filter((s) => s.id !== songId);
+  console.log('[delete] 從 SONG_LIBRARY 移除後, 剩下', SONG_LIBRARY.length, '首歌, id=', songId);
 
   // 確保 playlist_updated 也廣播（否則前端佇列 UI 不會更新）
   io.emit('playlist_updated', {
