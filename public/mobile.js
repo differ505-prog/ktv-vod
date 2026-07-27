@@ -16,7 +16,7 @@
   const npArtist = document.getElementById('npArtist');
   const npCover = document.getElementById('npCover');
   const npMode = document.getElementById('npMode');
-  const npQueue = document.getElementById('npQueue');
+  const npQueueNum = document.getElementById('npQueueNum');
   const npTrashBtn = document.getElementById('npTrashBtn');
   const btnSkip = document.getElementById('btnSkip');
   const btnVocal = document.getElementById('btnVocal');
@@ -224,7 +224,11 @@
       // 把垃圾桶入口塞進待播佇列 tab 旁 (用 footer button 的方式)
       ensureTrashButton();
       // 顯示歌曲庫刪除按鈕
-      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => btn.classList.remove('hidden'));
+      console.log('[DEBUG] hostMode unlocked, showing delete buttons. Found:', document.querySelectorAll('.song-card .delete-song-btn').length);
+      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => {
+        btn.style.display = '';
+        console.log('[DEBUG] btn display set to:', btn.style.display);
+      });
       // 重新渲染 now playing hint icon
       if (typeof renderNowPlaying === 'function') renderNowPlaying();
     } else {
@@ -233,7 +237,7 @@
       btnHost.classList.remove('border', 'border-green-500/30');
       removeTrashButton();
       // 隱藏歌曲庫刪除按鈕
-      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => btn.classList.add('hidden'));
+      document.querySelectorAll('.song-card .delete-song-btn').forEach(btn => btn.style.display = 'none');
       if (typeof renderNowPlaying === 'function') renderNowPlaying();
     }
   }
@@ -408,15 +412,15 @@
     });
   }
 
-  function renderImmersiveButton() {
-    if (immersiveMode) {
-      immersiveLabel.textContent = 'TV 退出全螢幕';
-      immersiveIcon.className = 'fa-solid fa-compress text-xl';
-    } else {
-      immersiveLabel.textContent = 'TV 全螢幕';
-      immersiveIcon.className = 'fa-solid fa-expand text-xl';
-    }
+function renderImmersiveButton() {
+  if (immersiveMode) {
+    immersiveLabel.textContent = 'TV 退出';
+    immersiveIcon.className = 'fa-solid fa-compress text-white text-lg';
+  } else {
+    immersiveLabel.textContent = 'TV';
+    immersiveIcon.className = 'fa-solid fa-expand text-white text-lg';
   }
+}
 
   // ===== 渲染 =====
 function renderAll() {
@@ -425,22 +429,22 @@ function renderAll() {
   renderVocalButton();
 }
 
-  function renderVocalButton() {
-    if (audioMode === 'vocal_off') {
-      vocalLabel.textContent = '伴奏中';
-      vocalIcon.className = 'fa-solid fa-guitar text-xl';
-    } else {
-      vocalLabel.textContent = '原唱';
-      vocalIcon.className = 'fa-solid fa-microphone-lines text-xl';
-    }
+function renderVocalButton() {
+  if (audioMode === 'vocal_off') {
+    vocalLabel.textContent = '伴奏';
+    vocalIcon.className = 'fa-solid fa-guitar text-white text-lg';
+  } else {
+    vocalLabel.textContent = '原唱';
+    vocalIcon.className = 'fa-solid fa-microphone-lines text-white text-lg';
   }
+}
 
 function renderNowPlaying() {
   if (!currentSong) {
     npTitle.textContent = '等待點歌...';
-    npArtist.textContent = '掃描電視 QR 或點下方歌曲加入點歌列隊';
+    npArtist.textContent = '掃描電視 QR 或點下方歌曲加入';
     npCover.classList.add('opacity-0');
-    npQueue.innerHTML = '<i class="fa-solid fa-list-ol"></i> 佇列 0 首';
+    npQueueNum.textContent = '佇列 0 首';
     detachNowPlayingLongPress();
     return;
   }
@@ -450,20 +454,15 @@ function renderNowPlaying() {
          <i class="fa-solid fa-trash-can text-sm"></i>
        </button>`;
     npTrashBtn.classList.remove('hidden');
-    console.log('[renderNowPlaying] 顯示刪除按鈕', { hostModeUnlocked, currentSong: !!currentSong, btnExists: !!document.getElementById('btnNpDelete') });
   } else {
     npTrashBtn.innerHTML = '';
     npTrashBtn.classList.add('hidden');
-    console.log('[renderNowPlaying] 隱藏刪除按鈕', { hostModeUnlocked, currentSong: !!currentSong });
   }
 
-  npTitle.textContent = currentSong.title || '—';
-
-  const parts = [];
-  if (currentSong.artist) parts.push(currentSong.artist);
-  if (currentSong.album) parts.push(currentSong.album);
-  if (currentSong.duration) parts.push(currentSong.duration);
-  npArtist.textContent = parts.length > 0 ? parts.join(' · ') : '—';
+  const displayTitle = currentSong.title || '—';
+  const displayArtist = currentSong.artist || '';
+  npTitle.textContent = displayTitle;
+  npArtist.textContent = displayArtist;
 
   if (currentSong.cover) {
     npCover.src = currentSong.cover;
@@ -474,17 +473,14 @@ function renderNowPlaying() {
     npCover.classList.add('opacity-0');
   }
 
-  npQueue.innerHTML = `<i class="fa-solid fa-list-ol"></i> 佇列 ${playlist.length} 首`;
+  npQueueNum.textContent = `佇列 ${playlist.length} 首`;
 
   if (audioMode === 'vocal_off') {
     npMode.innerHTML = '<i class="fa-solid fa-guitar"></i> 伴奏';
-    npMode.className = 'px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300';
   } else {
     npMode.innerHTML = '<i class="fa-solid fa-microphone"></i> 原唱';
-    npMode.className = 'px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300';
   }
 
-  // 每次有 currentSong 時都確保長按 listener 是綁定狀態
   attachNowPlayingLongPress();
 }
 
@@ -495,48 +491,105 @@ function renderNowPlaying() {
  *   │     周杰倫 · 十一月的蕭邦 · 4:32    │
  *   └─────────────────────────────────────┘
  */
-function renderSongCard(song, opts = {}) {
-  const { action = 'pick', index = null } = opts;
-  const li = document.createElement('button');
-  li.className = 'w-full glass rounded-xl p-3 flex items-center gap-3 song-card text-left';
-  li.dataset.songId = song.id;
 
-  const durationStr = song.duration ? ` · ${escapeHtml(song.duration)}` : '';
-  const albumStr = song.album ? ` · ${escapeHtml(song.album)}` : '';
-  const artistLine = `${escapeHtml(song.artist || '未知歌手')}${albumStr}${durationStr}`;
-  const titleLine = escapeHtml(song.title || '未知歌曲');
+  // ===== 強大的檔名過濾器：parseSongInfo(rawFilename) =====
+  // 支援格式：歌手 - 歌名 / 歌手_歌名 / [歌手]歌名 / 純歌名
+  // 移除所有常見後綴與噪音字
+  function parseSongInfo(raw) {
+    if (!raw) return { artist: '未知歌手', title: '' };
+    let s = String(raw);
 
-  // 封面 (oEmbed thumbnail, 失敗會 fallback 為音符 icon)
-  const coverHtml = song.cover
-    ? `<img src="${escapeHtml(song.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fa-solid fa-music\\'></i>'" />`
-    : '<i class="fa-solid fa-music"></i>';
+    // Step 1: 移除所有常見後綴
+    s = s.replace(/_?(ktv|Official[_ ]?MV|Official[_ ]?Video|Official|Audio|Live|完整版|MV完整版)$/gi, '');
+    s = s.replace(/[\(（]Official_Video[\)）]/gi, '');
+    s = s.replace(/【MV】/g, '');
+    s = s.replace(/\.mp4$/i, '');
 
-  const indexHtml = index !== null
-    ? `<div class="w-8 text-center text-pink-400 font-bold text-sm flex-shrink-0">${index + 1}</div>`
-    : '';
+    // Step 2: 底線替換為空格
+    s = s.replace(/_/g, ' ').trim();
+    if (!s) return { artist: '未知歌手', title: '' };
 
-  const actionHtml = action === 'queue'
-    ? `<div class="text-[10px] text-gray-500"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
-    : `<div class="flex items-center gap-1 flex-shrink-0">
-         <button class="delete-song-btn hidden text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲">
-           <i class="fa-solid fa-trash-can text-sm"></i>
-         </button>
-         <div class="cyan-btn rounded-lg px-3 py-1.5 text-xs font-bold flex items-center gap-1">
-           <i class="fa-solid fa-plus"></i> 點歌
-         </div>
-       </div>`;
+    // Step 3: 嘗試以「 - 」拆分 (歌手 - 歌名)
+    if (s.includes(' - ')) {
+      const parts = s.split(' - ').map((p) => p.trim());
+      const title = parts.pop().replace(/^[《》（）()【】\[\]]+|[《》（）()【】\[\]]+$/g, '');
+      const artist = parts.join(' ').replace(/^[《》（）()【】\[\]]+|[《》（）()【】\[\]]+$/g, '');
+      return {
+        artist: artist || '未知歌手',
+        title: title || s,
+      };
+    }
 
-  li.innerHTML = `
-    ${indexHtml}
-    <div class="w-12 h-12 rounded-lg overflow-hidden bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
-      ${coverHtml}
-    </div>
-    <div class="flex-1 min-w-0 overflow-hidden">
-      <div class="font-medium text-sm leading-tight line-clamp-2 break-words" title="${titleLine}">${titleLine}</div>
-      <div class="text-xs text-gray-400 truncate mt-0.5" title="${artistLine}">${artistLine}</div>
-    </div>
-    ${actionHtml}
-  `;
+    // Step 4: 嘗試以「[]」或「【】」拆分
+    const bracketMatch = s.match(/^[\[【(（](.+?)[\]】)）]\s*(.+)$/);
+    if (bracketMatch) {
+      return {
+        artist: bracketMatch[1].trim(),
+        title: bracketMatch[2].trim(),
+      };
+    }
+
+    // Step 5: 只有當原始字串含底線時，才用「最後一個空格」拆分（適用於「歌手_歌名」格式）
+    // 否則視為純歌名（歌手留空）
+    if (raw.includes('_')) {
+      const lastSpaceIdx = s.lastIndexOf(' ');
+      if (lastSpaceIdx > 2) {
+        return {
+          artist: s.slice(0, lastSpaceIdx).trim(),
+          title: s.slice(lastSpaceIdx + 1).trim(),
+        };
+      }
+    }
+
+    return { artist: '未知歌手', title: s };
+  }
+
+  function renderSongCard(song, opts = {}) {
+    const { action = 'pick', index = null } = opts;
+    const li = document.createElement('div');
+    li.className = 'w-full flex items-center gap-3 py-3 border-b border-white/5 song-card text-left';
+    li.dataset.songId = song.id;
+
+    // server.js 的 parseSongTitle 已淨化，直接用
+    const displayTitle = song.title || '未知歌曲';
+    const displayArtist = song.artist || '未知歌手';
+
+    const durationStr = song.duration ? ` · ${escapeHtml(song.duration)}` : '';
+    const subtitleLine = displayArtist
+      ? `${escapeHtml(displayArtist)}${durationStr}`
+      : durationStr ? durationStr.slice(3) : '';
+
+    // 封面
+    const coverHtml = song.cover
+      ? `<img src="${escapeHtml(song.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fa-solid fa-music text-gray-500\\'></i>'" />`
+      : '<i class="fa-solid fa-music text-gray-500 text-lg"></i>';
+
+    const indexHtml = index !== null
+      ? `<div class="w-6 text-center text-gray-500 font-medium text-sm flex-shrink-0">${index + 1}</div>`
+      : '';
+
+    const actionHtml = action === 'queue'
+      ? `<div class="text-[10px] text-gray-500 flex-shrink-0"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
+      : `<div class="flex items-center gap-1 flex-shrink-0">
+           <div class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition active:scale-90">
+             <i class="fa-solid fa-plus text-sm text-white"></i>
+           </div>
+           <button class="delete-song-btn text-red-400/50 hover:text-red-300 p-2 rounded-full hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲" style="display:none;">
+             <i class="fa-solid fa-trash-can text-sm"></i>
+           </button>
+         </div>`;
+
+    li.innerHTML = `
+      ${indexHtml}
+      <div class="w-12 h-12 rounded-lg overflow-hidden bg-[#282828] flex items-center justify-center flex-shrink-0">
+        ${coverHtml}
+      </div>
+      <div class="flex-1 min-w-0 overflow-hidden">
+        <div class="text-white text-sm font-medium truncate leading-snug">${escapeHtml(displayTitle)}</div>
+        <div class="text-gray-400 text-xs truncate mt-0.5">${escapeHtml(subtitleLine)}</div>
+      </div>
+      ${actionHtml}
+    `;
 
   if (action === 'queue') {
     // 佇列卡不能點
@@ -546,21 +599,6 @@ function renderSongCard(song, opts = {}) {
 
   return li;
 }
-
-/**
- * 三層防護的 UI 端實作 — 第 1 層動作分離:
- *
- * renderQueue 渲染每張佇列卡時,綁定兩種互動:
- *   (a) 左滑超過 80px (touch/pointer move) → 滑出刪除「從佇列移除」按鈕
- *       → release 後按 DELETE 觸發 /api/songs/remove-from-queue
- *   (b) 長按 600ms → (主揪模式已啟用) 彈「永久刪除」confirm modal
- *
- * 兩個動作是分離的:
- *   左滑  → 只是把這首「不唱了」,檔案還在 NAS / Song Library
- *   長按  → 主揪決定要把檔案從 NAS 永久踢出去 (其實也只是移到 _Trash)
- *
- * 沒解鎖主揪模式時,長按不做事 (只震動一下提示「需主揪模式」)。
- */
 function renderQueue() {
   queueList.innerHTML = '';
   if (playlist.length === 0) {
@@ -1241,6 +1279,92 @@ function attachLibraryCardLongPress(li, song) {
       });
     }
   }
+
+  // ===== 歌手白名單管理 =====
+  let artistData = {};
+
+  function openArtistModal() {
+    document.getElementById('artistModal').classList.remove('hidden');
+    loadArtistList();
+  }
+
+  function loadArtistList() {
+    fetch('/api/artists')
+      .then(r => r.json())
+      .then(d => {
+        artistData = d.artists || {};
+        renderArtistList();
+      })
+      .catch(() => showToast('載入歌手白名單失敗'));
+  }
+
+  function renderArtistList() {
+    const list = document.getElementById('artistList');
+    const entries = Object.entries(artistData).sort((a, b) => a[1].localeCompare(b[1], 'zh'));
+    if (entries.length === 0) {
+      list.innerHTML = '<p class="text-gray-500 text-sm text-center py-8">尚無歌手，新增第一筆吧</p>';
+      return;
+    }
+    list.innerHTML = entries.map(([key, display]) => `
+      <div class="flex items-center gap-2 bg-white/5 rounded-xl px-3 py-2">
+        <div class="flex-1 min-w-0">
+          <div class="text-white text-sm font-medium truncate">${escapeHtml(display)}</div>
+          <div class="text-gray-500 text-[10px] truncate">${escapeHtml(key)}</div>
+        </div>
+        <button class="del-artist-btn text-red-400/50 hover:text-red-300 p-2 rounded-full hover:bg-red-500/20 transition flex-shrink-0"
+          data-key="${escapeHtml(key)}" title="移除">
+          <i class="fa-solid fa-trash-can text-sm"></i>
+        </button>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('btnOpenArtistModal').addEventListener('click', () => {
+    document.getElementById('settingsModal').classList.add('hidden');
+    openArtistModal();
+  });
+
+  document.getElementById('btnAddArtist').addEventListener('click', () => {
+    const key = document.getElementById('inputArtistKey').value.trim();
+    const display = document.getElementById('inputArtistDisplay').value.trim();
+    if (!key || !display) { showToast('請填寫 key 與顯示名'); return; }
+    fetch('/api/artists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, displayName: display }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          showToast(`已新增：${display}`);
+          document.getElementById('inputArtistKey').value = '';
+          document.getElementById('inputArtistDisplay').value = '';
+          loadArtistList();
+        } else {
+          showToast('新增失敗：' + (d.error || ''));
+        }
+      })
+      .catch(() => showToast('網路錯誤'));
+  });
+
+  document.getElementById('artistList').addEventListener('click', (e) => {
+    const btn = e.target.closest('.del-artist-btn');
+    if (!btn) return;
+    const key = btn.dataset.key;
+    if (!confirm(`確定移除「${artistData[key] || key}」？`)) return;
+    fetch(`/api/artists/${encodeURIComponent(key)}`, { method: 'DELETE' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) { showToast('已移除'); loadArtistList(); }
+        else showToast('移除失敗');
+      })
+      .catch(() => showToast('網路錯誤'));
+  });
+
+  // Modal 關閉
+  document.querySelectorAll('[data-close-artist]').forEach(el => {
+    el.addEventListener('click', () => document.getElementById('artistModal').classList.add('hidden'));
+  });
 
   // ===== 啟動 =====
   fetchSongs();

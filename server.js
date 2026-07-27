@@ -51,6 +51,27 @@ const DEMUCS_MODEL = process.env.DEMUCS_MODEL || 'htdemucs';
 const DEMUCS_FORCE_CPU = (process.env.DEMUCS_FORCE_CPU || 'false').toLowerCase() === 'true';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
+// ===== 歌手白名單 =====
+let ARTIST_LOOKUP = {};
+function loadArtistLookup() {
+  try {
+    const p = path.join(__dirname, 'artist-lookup.json');
+    if (fs.existsSync(p)) {
+      const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      // 過濾掉 _comment 等 meta key
+      ARTIST_LOOKUP = Object.fromEntries(
+        Object.entries(raw).filter(([k]) => !k.startsWith('_'))
+      );
+      log('info', '歌手白名單已載入', { count: Object.keys(ARTIST_LOOKUP).length });
+    } else {
+      log('warn', 'artist-lookup.json 不存在，使用自動解析');
+    }
+  } catch (e) {
+    log('warn', '載入 artist-lookup.json 失敗', { err: e.message });
+  }
+}
+loadArtistLookup();
+
 const TV_CACHE_DIR = process.env.TV_CACHE_DIR || path.join(path.dirname(VIDEO_DIR), 'tv_cache');
 const CONFIG_FILE = path.join(path.dirname(VIDEO_DIR), 'sync_config.json');
 
@@ -200,6 +221,70 @@ function toPublicUrl(src) {
 }
 
 // ===== 歌曲庫載入 =====
+/**
+ * 淨化本地檔名 → { title, artist }
+ * 例如: "Coldplay_Viva_La_Vida_(Official_Video)_ktv" → { title: "Viva La Vida", artist: "Coldplay" }
+ *       "Beyond_海闊天空_ktv" → { title: "海闊天空", artist: "Beyond" }
+ *       "伍佰 & China Blue 淚橋(MV完整版)" → { title: "淚橋", artist: "伍佰 & China Blue" }
+ */
+function parseSongTitle(raw) {
+  let s = String(raw);
+
+  // 移除常見後綴
+  s = s.replace(/_?(ktv|Official[_ ]?MV|Official[_ ]?Video|Official|Audio|Live|完整版|MV完整版)$/gi, '');
+  s = s.replace(/\(Official_Video\)/gi, '');
+  s = s.replace(/【MV】/g, '');
+  s = s.replace(/\.mp4$/i, '');
+
+  // 底線替換為空格
+  let normalized = s.replace(/_/g, ' ').trim();
+  if (!normalized) return { title: raw, artist: '未知歌手' };
+
+  // ── 1. 白名單歌手匹配 ────────────────────────────────────────
+  {
+    const lower = normalized.toLowerCase();
+    for (const [key, displayName] of Object.entries(ARTIST_LOOKUP)) {
+      const kw = key.toLowerCase().replace(/_/g, ' ');
+      if (lower.startsWith(kw + ' ') || lower.startsWith(kw + '\u3000')) {
+        let titlePart = normalized.slice(kw.length).replace(/^[\s\u3000]+/, '').trim();
+        titlePart = titlePart.replace(/^[《」（）()【】\[\]]+/, '').trim();
+        if (titlePart) return { artist: displayName, title: titlePart };
+      }
+    }
+  }
+
+  // ── 2.「歌手 - 歌名」格式 ────────────────────────────────────
+  if (normalized.includes(' - ')) {
+    const parts = normalized.split(' - ').map((p) => p.trim());
+    const title = parts.pop().replace(/^[《」（）()【】\[\]]+|[《」（）()【】\[\]]+$/g, '').trim();
+    const artist = parts.join(' ').replace(/^[《」（）()【】\[\]]+|[《」（）()【】\[\]]+$/g, '').trim();
+    if (title) return { artist: artist || '未知歌手', title };
+  }
+
+  // ── 3. [歌手]歌名 括號格式 ───────────────────────────────────
+  {
+    const m = normalized.match(/^[\[【(（](.+?)[\]】)）]\s*(.+)$/);
+    if (m) return { artist: m[1].trim(), title: m[2].trim() };
+  }
+
+  // ── 4. Fallback：找歌名最長的拆分 ─────────────────────────────
+  if (raw.includes('_')) {
+    const tokens = normalized.split(' ');
+    if (tokens.length >= 2) {
+      let bestArtist = tokens[0];
+      let bestTitle = tokens.slice(1).join(' ');
+      for (let i = 1; i < Math.min(tokens.length, 5); i++) {
+        const a = tokens.slice(0, i).join(' ');
+        const t = tokens.slice(i).join(' ');
+        if (t.length > bestTitle.length) { bestArtist = a; bestTitle = t; }
+      }
+      return { artist: bestArtist, title: bestTitle };
+    }
+  }
+
+  return { title: normalized, artist: '未知歌手' };
+}
+
 // 策略:只顯示 VIDEO_DIR 下的 .mp4 檔,從檔名解析標題/歌手
 // 之前有 6 首內建佔位假歌 (Big Buck Bunny 等) 已全部移除。
 function scanLocalVideos() {
@@ -212,15 +297,13 @@ function scanLocalVideos() {
       let idx = 0;
       for (const f of files) {
         idx += 1;
-        const name = path.basename(f, path.extname(f));
+        const raw = path.basename(f, path.extname(f));
         // 跳過已經是 vocal_off 變體，避免在 library 重複出現
-        if (/_vocal_off$/.test(name)) continue;
-        // 檔名慣例：「歌手 - 標題」會自動切割
-        const sep = name.indexOf(' - ');
-        const artist = sep > 0 ? name.slice(0, sep).trim() : '本機歌曲';
-        const title = sep > 0 ? name.slice(sep + 3).trim() : name;
+        if (/_vocal_off$/.test(raw)) continue;
+        // 用 parseSongTitle 淨化檔名 → { title, artist }
+        const { title, artist } = parseSongTitle(raw);
         // 若對應的 *_vocal_off.mp4 存在，就帶 srcVocalOff 給 TV 切換
-        const vocalOffName = `${name}_vocal_off.mp4`;
+        const vocalOffName = `${raw}_vocal_off.mp4`;
         const vocalOffExists = fs.existsSync(path.join(VIDEO_DIR, vocalOffName));
         local.push({
           id: `local-${String(idx).padStart(3, '0')}`,
@@ -336,6 +419,54 @@ function rebuildLibrary() {
 
   return { changed: true, added: added.length, removed: removed.length };
 }
+
+// ===== 歌手白名單 REST API =====
+app.get('/api/artists', (req, res) => {
+  res.json({ success: true, artists: ARTIST_LOOKUP });
+});
+
+app.post('/api/artists', (req, res) => {
+  const { key, displayName } = req.body || {};
+  if (!key || typeof key !== 'string' || !displayName || typeof displayName !== 'string') {
+    return res.status(400).json({ success: false, error: '需提供 key 與 displayName' });
+  }
+  const k = key.trim();
+  const v = displayName.trim();
+  if (!k || !v) return res.status(400).json({ success: false, error: 'key 與 displayName 不可為空' });
+
+  ARTIST_LOOKUP[k] = v;
+  try {
+    const p = path.join(__dirname, 'artist-lookup.json');
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    raw[k] = v;
+    fs.writeFileSync(p, JSON.stringify(raw, null, 2), 'utf-8');
+    log('info', '更新歌手白名單', { key: k, displayName: v });
+    // 重建歌曲庫讓解析立即生效
+    setTimeout(() => { try { rebuildLibrary(); } catch (_) {} }, 100);
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: '寫入失敗: ' + e.message });
+  }
+});
+
+app.delete('/api/artists/:key', (req, res) => {
+  const k = decodeURIComponent(req.params.key);
+  if (!k || !ARTIST_LOOKUP[k]) {
+    return res.status(404).json({ success: false, error: '找不到該歌手' });
+  }
+  delete ARTIST_LOOKUP[k];
+  try {
+    const p = path.join(__dirname, 'artist-lookup.json');
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    delete raw[k];
+    fs.writeFileSync(p, JSON.stringify(raw, null, 2), 'utf-8');
+    log('info', '刪除歌手', { key: k });
+    setTimeout(() => { try { rebuildLibrary(); } catch (_) {} }, 100);
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: '寫入失敗: ' + e.message });
+  }
+});
 
 // ===== RESTful API =====
 app.get('/api/songs', (req, res) => {
@@ -735,18 +866,27 @@ let playlist = [];
 let currentSong = null;
 let audioMode = 'original';
 const songHistory = [];
+// 自動播放時追蹤已播過的歌曲ID，避免短時間重複
+const autoPlayedIds = new Set();
+const AVOID_RECENT_COUNT = 20;
 
 function getNextSong() {
   if (playlist.length > 0) {
     return playlist.shift();
   }
-  const fallbackIndex = songHistory.length % SONG_LIBRARY.length;
-  const next = SONG_LIBRARY[fallbackIndex];
-  return {
-    ...next,
-    addedBy: 'Auto',
-    addedAt: Date.now(),
-  };
+  // 空佇列：隨機挑一首且近 N 首沒播過的
+  const recentIds = new Set(Array.from(songHistory.slice(-AVOID_RECENT_COUNT)).map((s) => s.id));
+  const candidates = SONG_LIBRARY.filter(
+    (s) => !recentIds.has(s.id) && !autoPlayedIds.has(s.id)
+  );
+  // 若已全部播過一遍，重置追蹤
+  if (candidates.length === 0) {
+    autoPlayedIds.clear();
+    candidates.push(...SONG_LIBRARY);
+  }
+  const next = candidates[Math.floor(Math.random() * candidates.length)];
+  autoPlayedIds.add(next.id);
+  return { ...next, addedBy: 'Auto', addedAt: Date.now() };
 }
 
 // ===== Socket.io 連線管理 =====
