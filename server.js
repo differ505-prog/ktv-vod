@@ -1038,7 +1038,7 @@ function advanceToNextSong() {
     playlist: [...playlist],
     currentSong,
   });
-  io.emit('change_audio_mode', { audioMode });
+  // 不廣播 audioMode，保持用戶當前設定不變
 
   log('info', '現在播放', { title: currentSong.title, mode: audioMode });
 
