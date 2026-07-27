@@ -147,6 +147,10 @@ from ktv_pipeline.alignment import (
     trim_wav_to_duration,
     build_atrim_filter,
     compute_audio_skip,
+    # v2 (9.0/10 重構): 可調參數 dataclass + 診斷 helper
+    AlignmentConfig,
+    DEFAULT_CONFIG,
+    diagnose_wav,
 )
 
 

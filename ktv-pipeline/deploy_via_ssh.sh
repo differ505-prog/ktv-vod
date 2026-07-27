@@ -204,14 +204,22 @@ try:
         DEFAULT_DEMUCS_SR, build_atrim_filter, compute_audio_skip,
         get_wav_duration_s, get_wav_samples, leading_silence_seconds,
         trim_wav_to_duration,
+        # v2 (9.0/10 重構): AlignmentConfig + DEFAULT_CONFIG + diagnose_wav
+        AlignmentConfig, DEFAULT_CONFIG, diagnose_wav,
     )
-    # 跑兩個純邏輯檢查,確認 7/26 修的 helper 沒 syntax/邏輯錯
+    # 跑純邏輯檢查,確認 7/26 + 重構版都沒 syntax/邏輯錯
     af = build_atrim_filter(1.5)  # audio_skip_s=1.5
     assert isinstance(af, str) and len(af) > 0, "build_atrim_filter 沒回字串"
+    af_small = build_atrim_filter(0.02)
+    assert af_small == "", f"build_atrim_filter(0.02) 應為空,實際 {af_small!r}"
     dur = get_wav_duration_s  # 確認 callable
     assert callable(dur), "get_wav_duration_s 不是函式"
+    cfg = AlignmentConfig()
+    assert hasattr(cfg, "rms_db_threshold"), "AlignmentConfig 缺少 rms_db_threshold"
+    assert DEFAULT_CONFIG is not None, "DEFAULT_CONFIG 未匯出"
     print("✓ alignment module imports OK")
-    print("✓ build_atrim_filter returns string")
+    print("✓ build_atrim_filter returns string (large) + empty (small)")
+    print("✓ AlignmentConfig + DEFAULT_CONFIG exports OK")
 except Exception as e:
     print(f"✗ FAIL: {e}", file=sys.stderr)
     sys.exit(1)
