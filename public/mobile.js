@@ -61,6 +61,9 @@
   const deleteConfirm = document.getElementById('deleteConfirm');
   const trashModal = document.getElementById('trashModal');
   const trashList = document.getElementById('trashList');
+  const fixArtistModal = document.getElementById('fixArtistModal');
+  const fixArtistSongInfo = document.getElementById('fixArtistSongInfo');
+  const inputFixArtist = document.getElementById('inputFixArtist');
 
   // ===== 狀態 =====
   let songs = [];       // 歌曲庫
@@ -350,6 +353,11 @@
   document.querySelectorAll('[data-close-trash]').forEach((el) => {
     el.addEventListener('click', () => trashModal.classList.add('hidden'));
   });
+  document.querySelectorAll('[data-close-fix-artist]').forEach((el) => {
+    el.addEventListener('click', closeFixArtistModal);
+  });
+  document.getElementById('btnCancelFixArtist')?.addEventListener('click', closeFixArtistModal);
+  document.getElementById('btnConfirmFixArtist')?.addEventListener('click', confirmFixArtist);
   async function openTrashModal() {
     trashModal.classList.remove('hidden');
     trashList.innerHTML = '<div class="text-center text-gray-500 text-sm py-6">載入中...</div>';
@@ -730,6 +738,41 @@ function openDeleteConfirmModal(song) {
   deleteModal.classList.remove('hidden');
 }
 
+let _fixArtistSong = null;
+
+function openFixArtistModal(song) {
+  _fixArtistSong = song;
+  fixArtistSongInfo.textContent = `${song.title || '未知歌曲'} · ${song.artist || '未知歌手'}`;
+  inputFixArtist.value = song.artist || '';
+  fixArtistModal.classList.remove('hidden');
+  setTimeout(() => inputFixArtist.focus(), 200);
+}
+
+function closeFixArtistModal() {
+  fixArtistModal.classList.add('hidden');
+  _fixArtistSong = null;
+}
+
+async function confirmFixArtist() {
+  const newArtist = inputFixArtist.value.trim();
+  if (!newArtist || !_fixArtistSong) return;
+  const key = newArtist; // 白名單 key = 顯示名
+  const displayName = newArtist;
+  try {
+    const res = await fetch('/api/artists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, displayName }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '寫入失敗');
+    showToast(`已寫入白名單：${displayName}`, 'success');
+    closeFixArtistModal();
+  } catch (err) {
+    showToast(`❌ ${err.message}`, 'error');
+  }
+}
+
 /**
  * 給「正在播放」卡片綁定長按手勢 → 永久刪除入口
  * - 每次 renderNowPlaying 有 currentSong 時呼叫
@@ -908,11 +951,7 @@ function attachLibraryCardLongPress(li, song) {
     if (elapsed >= 600) {
       wasLongPress = true;
       if ('vibrate' in navigator) navigator.vibrate(40);
-      if (!hostModeUnlocked) {
-        showToast('🔒 需主揪模式解鎖才能刪除', 'info');
-      } else {
-        openDeleteConfirmModal(song);
-      }
+      openFixArtistModal(song);
     }
     pressStart = 0;
   };

@@ -468,6 +468,28 @@
     </div>
   </div>
 
+  <!-- 修正歌手 Modal（長按歌曲卡觸發） -->
+  <div id="fixArtistModal" class="fixed inset-0 z-50 hidden">
+    <div class="modal-backdrop absolute inset-0" data-close-fix-artist></div>
+    <div class="modal-content relative h-full flex items-end sm:items-center justify-center p-4">
+      <div class="glass rounded-2xl p-5 w-full max-w-md border border-yellow-400/30 flex flex-col">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-base"><i class="fa-solid fa-pen-nib text-yellow-400"></i> 修正歌手名稱</h3>
+          <button data-close-fix-artist class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div id="fixArtistSongInfo" class="text-gray-300 text-sm mb-4 line-clamp-2"></div>
+        <input id="inputFixArtist" type="text" placeholder="歌手名稱"
+          class="w-full rounded-xl bg-white/10 border border-white/20 px-4 py-3 text-white text-base placeholder-gray-500 focus:outline-none focus:border-yellow-400 mb-3" />
+        <div class="flex gap-2">
+          <button id="btnCancelFixArtist" class="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-sm transition">取消</button>
+          <button id="btnConfirmFixArtist" class="flex-1 py-3 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold transition">寫入白名單</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Cache-busting: 部署時間戳,讓 user 不必手動 Ctrl+Shift+R
     // 用 document.write 同步替換 src,避免 race
