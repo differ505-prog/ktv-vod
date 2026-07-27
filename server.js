@@ -869,6 +869,8 @@ const songHistory = [];
 // 自動播放時追蹤已播過的歌曲ID，避免短時間重複
 const autoPlayedIds = new Set();
 const AVOID_RECENT_COUNT = 20;
+const SONG_TIMEOUT_MS = 5 * 60 * 1000;
+let songTimeout;
 
 function getNextSong() {
   if (playlist.length > 0) {
@@ -997,7 +999,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('song_ended', () => {
-    log('info', '歌曲播完', { from: socket.id });
+    log('info', '歌曲播完', { from: socket.id, currentSong: currentSong?.title });
+    clearTimeout(songTimeout);
     if (currentSong) {
       songHistory.push(currentSong);
       if (songHistory.length > 50) songHistory.shift();
@@ -1018,6 +1021,7 @@ io.on('connection', (socket) => {
 });
 
 function advanceToNextSong() {
+  clearTimeout(songTimeout);
   const next = getNextSong();
   currentSong = next;
 
@@ -1029,6 +1033,17 @@ function advanceToNextSong() {
   io.emit('change_audio_mode', { audioMode });
 
   log('info', '現在播放', { title: currentSong.title, mode: audioMode });
+
+  // 啟動超時計時（song_ended 沒來就自動切歌）
+  songTimeout = setTimeout(() => {
+    if (currentSong) {
+      log('warn', 'song_ended 超時保險觸發', { currentSong: currentSong.title });
+      io.emit('stop_song');
+      songHistory.push(currentSong);
+      if (songHistory.length > 50) songHistory.shift();
+      advanceToNextSong();
+    }
+  }, SONG_TIMEOUT_MS);
 }
 
 /**
