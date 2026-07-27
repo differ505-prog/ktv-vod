@@ -960,9 +960,9 @@ function renderSongs() {
 }
 
 /**
- * 歌曲庫卡片的長按刪除（與佇列卡片一致）
- * - 長按 600ms → 永久刪除確認 modal（需主揪模式）
- * - 沒解鎖時震動提示
+ * 歌曲庫卡片的長按 → 修改歌曲資訊（title/artist）
+ * - 長按 600ms → 彈出 edit modal
+ * - 桌機 mousedown setTimeout 600ms 同步
  */
 function attachLibraryCardLongPress(li, song) {
   let pressStart = 0;
@@ -994,7 +994,7 @@ function attachLibraryCardLongPress(li, song) {
     if (elapsed >= 600) {
       wasLongPress = true;
       if ('vibrate' in navigator) navigator.vibrate(40);
-      openFixArtistModal(song);
+      openEditSongModal(song);
     }
     pressStart = 0;
   };
@@ -1021,7 +1021,7 @@ function attachLibraryCardLongPress(li, song) {
     mouseTimer = setTimeout(() => {
       wasLongPress = true;
       if ('vibrate' in navigator) navigator.vibrate(40);
-      openFixArtistModal(song);
+      openEditSongModal(song);
     }, 600);
   });
   li.addEventListener('mouseup', () => {
