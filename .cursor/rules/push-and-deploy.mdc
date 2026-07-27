@@ -13,7 +13,9 @@ alwaysApply: true
 
 ---
 
-## A. 每次優化 / debug 完成必做 (依 §5.1)
+## A. 每次優化 / debug 完成必做 (依 §5.1,一律自動觸發)
+
+> **2026-07-27 修憲**: user 明示「優化完一律 deploy 到 NAS」→ agent **一律**直接執行 commit + push + deploy,**不反問**。
 
 1. **git commit + push**
 2. **部署到 NAS**（依改動範圍）：
