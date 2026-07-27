@@ -16,6 +16,7 @@
   const audioModeLabel = document.getElementById('audioModeLabel');
   const connectionStatus = document.getElementById('connectionStatus');
   const standbyScreen = document.getElementById('standbyScreen');
+  const transitionOverlay = document.getElementById('transitionOverlay');
   const qrcodeDiv = document.getElementById('qrcode');
   const qrUrlDiv = document.getElementById('qrUrl');
   const unlockOverlay = document.getElementById('unlockOverlay');
@@ -80,6 +81,11 @@ let pendingSongSrc = null; // 解鎖前先把 src 暫存在這邊,等 unlock 後
 // 記住目前正在播的 song（保留 srcVocalOff 為診斷用），給 sync 顯示用
 let currentSongRef = null;
 
+// 解決 race condition：change_audio_mode 可能比 initAudioGraph() 先到
+// 這時 applyAudioMode 會因 audioReady=false 直接 return，mode 變更被丟棄
+// → 用 pendingAudioMode 緩存，等 initAudioGraph 完成後再 apply
+let pendingAudioMode = null;
+
 function initAudioGraph() {
     if (audioReady) return;
     try {
@@ -115,6 +121,13 @@ function initAudioGraph() {
 
       audioReady = true;
       console.log('[音訊] Web Audio 圖初始化完成 (新版：accGain + vocGain)');
+      // audioGraph 建好了，之前若有 pending mode，立刻補 apply
+      if (pendingAudioMode !== null) {
+        const m = pendingAudioMode;
+        pendingAudioMode = null;
+        console.log('[音訊] 套用 initAudioGraph 前緩存的 mode =', m);
+        applyAudioMode(m);
+      }
     } catch (err) {
       console.error('[音訊] 初始化失敗：', err);
     }
@@ -122,7 +135,9 @@ function initAudioGraph() {
 
   function applyAudioMode(mode) {
     if (!audioReady || !audioCtx) {
-      console.warn('[音訊] applyAudioMode 收到但 audioGraph 還沒建好');
+      // audioGraph 還沒建好 → 緩存起來，等 initAudioGraph() 完成後再 apply
+      pendingAudioMode = mode;
+      console.warn('[音訊] applyAudioMode 收到但 audioGraph 還沒建好，緩存 mode =', mode);
       return;
     }
     if (mode === 'original') {
@@ -168,14 +183,17 @@ function initAudioGraph() {
     playSong(currentSong);
   });
 
-  // 停止指令 (切歌時)
+  // 停止指令 (切歌時) - 黑幕過場
   socket.on('stop_song', () => {
     console.log('[Socket] 停止');
     try { video.pause(); } catch (e) {}
     video.removeAttribute('src');
     video.load();
     currentSongRef = null;
-    standbyScreen.style.display = 'flex';
+    // 顯示黑幕，隱藏待機畫面
+    standbyScreen.style.display = 'none';
+    transitionOverlay.style.opacity = '1';
+    transitionOverlay.style.pointerEvents = 'auto';
   });
 
   // 音軌切換
@@ -225,6 +243,9 @@ function initAudioGraph() {
     // (沉浸模式時會用 .ui-shown 蓋掉隱藏)
     wakeUI('nowPlaying', SMART_FADE.nowPlaying);
     standbyScreen.style.display = 'none';
+    // 淡出黑幕
+    transitionOverlay.style.opacity = '0';
+    transitionOverlay.style.pointerEvents = 'none';
 
     // 記住當前 song（含 srcVocalOff），給 change_audio_mode 切換音軌用
     currentSongRef = song;
