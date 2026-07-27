@@ -119,16 +119,30 @@ def build_atrim_filter(audio_skip_s: float) -> str:
 def compute_audio_skip(no_vocals_path: Path, vocals_path: Path) -> float:
     """計算兩個 wav 共同的 leading silence (取小的那個,保守不砍過頭)。
 
+    Demucs padding 通常只有 0.0~0.2s，超過 0.3s 幾乎一定是歌曲本身的
+    安靜前奏（鋼琴、弦樂漸入等），不應該砍掉。
+
     若量測失敗則回傳 0.0。
     """
+    MAX_DEMUCS_PADDING = 0.3  # Demucs 預熱 padding 上限
+
     ll_no_vocals = leading_silence_seconds(no_vocals_path, DEFAULT_DEMUCS_SR)
     ll_vocals = leading_silence_seconds(vocals_path, DEFAULT_DEMUCS_SR)
     audio_skip_s = min(ll_no_vocals, ll_vocals)
+
+    if audio_skip_s > MAX_DEMUCS_PADDING:
+        logger.info(
+            f"[對齊] 偵測到 leading silence: "
+            f"伴奏={ll_no_vocals:.2f}s, 人聲={ll_vocals:.2f}s → "
+            f"超過 Demucs padding 上限 {MAX_DEMUCS_PADDING}s，判定為歌曲本身內容，不砍"
+        )
+        return 0.0
+
     if audio_skip_s > 0.05:
         logger.info(
             f"[對齊] 偵測到 leading silence: "
             f"伴奏={ll_no_vocals:.2f}s, 人聲={ll_vocals:.2f}s → "
-            f"將砍掉音訊前 {audio_skip_s:.2f}s"
+            f"將砍掉音訊前 {audio_skip_s:.2f}s（在 Demucs padding 範圍內）"
         )
         return audio_skip_s
     return 0.0
