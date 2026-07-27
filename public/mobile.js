@@ -418,7 +418,6 @@ function renderAll() {
   renderNowPlaying();
   renderQueue();
   renderVocalButton();
-  attachNowPlayingLongPress();
 }
 
   function renderVocalButton() {
@@ -437,28 +436,22 @@ function renderNowPlaying() {
     npArtist.textContent = '掃描電視 QR 或點下方歌曲加入點歌列隊';
     npCover.classList.add('opacity-0');
     npQueue.innerHTML = '<i class="fa-solid fa-list-ol"></i> 佇列 0 首';
-    // 沒有正在播放 → 解除長按手勢 (避免殘留 timer)
     detachNowPlayingLongPress();
     return;
   }
 
-  // 主揪模式已解鎖時,卡片右上角加一個小「垃圾桶」icon 提示
-  // (長按 600ms 仍然觸發;icon 只是視覺提示,不擋點擊)
   npTrashHint.innerHTML = hostModeUnlocked
     ? '<div class="w-6 h-6 rounded-full bg-red-500/20 text-red-300 flex items-center justify-center text-[10px]" title="長按可永久刪除"><i class="fa-solid fa-trash-can"></i></div>'
     : '';
 
-  // 主標題 (歌名)
   npTitle.textContent = currentSong.title || '—';
 
-  // 副標題: 歌手 + 專輯 + 時長
   const parts = [];
   if (currentSong.artist) parts.push(currentSong.artist);
   if (currentSong.album) parts.push(currentSong.album);
   if (currentSong.duration) parts.push(currentSong.duration);
   npArtist.textContent = parts.length > 0 ? parts.join(' · ') : '—';
 
-  // 封面 (oEmbed thumbnail)
   if (currentSong.cover) {
     npCover.src = currentSong.cover;
     npCover.onload = () => npCover.classList.remove('opacity-0');
@@ -477,6 +470,9 @@ function renderNowPlaying() {
     npMode.innerHTML = '<i class="fa-solid fa-microphone"></i> 原唱';
     npMode.className = 'px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300';
   }
+
+  // 每次有 currentSong 時都確保長按 listener 是綁定狀態
+  attachNowPlayingLongPress();
 }
 
 /**
@@ -675,62 +671,72 @@ function openDeleteConfirmModal(song) {
 
 /**
  * 給「正在播放」卡片綁定長按手勢 → 永久刪除入口
- * - 與 queue 卡片長按共用 openDeleteConfirmModal(song)
- * - 沒解鎖主揪模式時不做事,只震動 + 提示 (與 queue 卡片一致)
- * - 長按 600ms 觸發;為了避免與點擊「切歌 / 原唱 / 邀請朋友」按鈕衝突,
- *   一律把 listener 綁在 nowPlayingCard 上,按鈕泡泡事件留給原本的 click
+ * - 每次 renderNowPlaying 有 currentSong 時呼叫
+ * - 沒解鎖主揪模式時只震動 + 提示，與 queue 卡片一致
+ * - 長按 600ms 觸發；按鈕泡泡事件留給原本的 click
  */
 let npPressTimer = null;
 let npPressed = false;
+
 function attachNowPlayingLongPress() {
   const card = nowPlayingCard;
-  // 跳過卡內的互動按鈕 (目前 nowPlayingCard 內沒有按鈕,但保險起見)
-  if (card.__lpBound) return;
-  card.__lpBound = true;
+  if (!card) return;
 
-  const startPress = (e) => {
-    if (e.target.closest('button, a, input, select, textarea')) return;
-    npPressed = false;
-    npPressTimer = setTimeout(() => {
-      npPressed = true;
-      if ('vibrate' in navigator) navigator.vibrate(40);
-      // 主揪模式沒解鎖 → 提示但不彈 modal (與 queue 卡片一致)
-      if (!hostModeUnlocked) {
-        showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
-        return;
-      }
-      if (!currentSong) return;
-      // 視覺脈衝 (讓使用者知道「長按被認列」)
-      card.classList.add('np-hold-pulse');
-      setTimeout(() => card.classList.remove('np-hold-pulse'), 450);
-      // 走與 queue 卡片長按同一條路徑
-      openDeleteConfirmModal(currentSong);
-    }, 600);
-  };
-  const cancelPress = () => {
-    if (npPressTimer) clearTimeout(npPressTimer);
-    npPressTimer = null;
-    if (npPressed) {
-      // 吞掉緊接著的 click 事件,避免誤觸相鄰按鈕
-      card.addEventListener('click', (ev) => ev.stopPropagation(), { once: true });
+  // 移除舊監聽（防止反覆呼叫疊加）
+  card.removeEventListener('touchstart', _npStartPress);
+  card.removeEventListener('touchend', _npCancelPress);
+  card.removeEventListener('touchcancel', _npCancelPress);
+  card.removeEventListener('mousedown', _npStartPress);
+  card.removeEventListener('mouseup', _npCancelPress);
+  card.removeEventListener('mouseleave', _npCancelPress);
+
+  card.addEventListener('touchstart', _npStartPress, { passive: true });
+  card.addEventListener('touchend', _npCancelPress);
+  card.addEventListener('touchcancel', _npCancelPress);
+  card.addEventListener('mousedown', _npStartPress);
+  card.addEventListener('mouseup', _npCancelPress);
+  card.addEventListener('mouseleave', _npCancelPress);
+}
+
+function _npStartPress(e) {
+  if (e.target.closest('button, a, input, select, textarea')) return;
+  npPressed = false;
+  npPressTimer = setTimeout(() => {
+    npPressed = true;
+    if ('vibrate' in navigator) navigator.vibrate(40);
+    if (!hostModeUnlocked) {
+      showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
+      return;
     }
-  };
+    if (!currentSong) return;
+    // 視覺脈衝確認長按被認定
+    nowPlayingCard.classList.add('np-hold-pulse');
+    setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
+    openDeleteConfirmModal(currentSong);
+  }, 600);
+}
 
-  card.addEventListener('touchstart', startPress, { passive: true });
-  card.addEventListener('touchend', cancelPress);
-  card.addEventListener('touchcancel', cancelPress);
-  card.addEventListener('mousedown', startPress);
-  card.addEventListener('mouseup', cancelPress);
-  card.addEventListener('mouseleave', cancelPress);
+function _npCancelPress() {
+  if (npPressTimer) clearTimeout(npPressTimer);
+  npPressTimer = null;
+  if (npPressed) {
+    nowPlayingCard.addEventListener('click', (ev) => ev.stopPropagation(), { once: true });
+  }
 }
 
 function detachNowPlayingLongPress() {
-  // renderNowPlaying 沒 currentSong 時呼叫,避免殘留 timer
-  if (npPressTimer) {
-    clearTimeout(npPressTimer);
-    npPressTimer = null;
-  }
+  if (npPressTimer) clearTimeout(npPressTimer);
+  npPressTimer = null;
   npPressed = false;
+  const card = nowPlayingCard;
+  if (card) {
+    card.removeEventListener('touchstart', _npStartPress);
+    card.removeEventListener('touchend', _npCancelPress);
+    card.removeEventListener('touchcancel', _npCancelPress);
+    card.removeEventListener('mousedown', _npStartPress);
+    card.removeEventListener('mouseup', _npCancelPress);
+    card.removeEventListener('mouseleave', _npCancelPress);
+  }
 }
 
 /**
