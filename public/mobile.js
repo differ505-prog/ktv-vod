@@ -142,6 +142,7 @@
     if (data.currentSong !== undefined) currentSong = data.currentSong;
     renderQueue();
     renderNowPlaying();
+    renderSongs();
   });
 
   socket.on('play_song', ({ currentSong: cs }) => {
@@ -440,11 +441,15 @@ function renderNowPlaying() {
     return;
   }
 
-  npTrashBtn.innerHTML = hostModeUnlocked && currentSong
-    ? `<button id="btnNpDelete" class="w-8 h-8 rounded-full bg-red-500/20 text-red-300 hover:bg-red-500/40 flex items-center justify-center transition active:scale-90" title="刪除這首歌">
+  if (hostModeUnlocked && currentSong) {
+    npTrashBtn.innerHTML = `<button id="btnNpDelete" class="w-8 h-8 rounded-full bg-red-500/20 text-red-300 hover:bg-red-500/40 flex items-center justify-center transition active:scale-90" title="刪除這首歌">
          <i class="fa-solid fa-trash-can text-sm"></i>
-       </button>`
-    : '';
+       </button>`;
+    npTrashBtn.classList.remove('hidden');
+  } else {
+    npTrashBtn.innerHTML = '';
+    npTrashBtn.classList.add('hidden');
+  }
 
   npTitle.textContent = currentSong.title || '—';
 

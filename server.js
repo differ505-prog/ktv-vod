@@ -415,6 +415,8 @@ app.post('/api/songs/delete', (req, res) => {
     io.emit('stop_song');
     songHistory.push(currentSong);
     if (songHistory.length > 50) songHistory.shift();
+    // 確保 playlist 裡也移除這首，避免 advanceToNextSong 還在佇列中看到它
+    playlist = playlist.filter((s) => s.id !== songId);
     advanceToNextSong(true);
     log('info', '刪除正在播放的歌曲,已自動切歌', { songId });
   }
@@ -469,6 +471,11 @@ app.post('/api/songs/delete', (req, res) => {
   // 從 SONG_LIBRARY 移除 (frontend 不用再過濾,但保持乾淨)
   SONG_LIBRARY = SONG_LIBRARY.filter((s) => s.id !== songId);
 
+  // 確保 playlist_updated 也廣播（否則前端佇列 UI 不會更新）
+  io.emit('playlist_updated', {
+    playlist: [...playlist],
+    currentSong,
+  });
   // 廣播 library_updated,前端自然會過濾掉這首
   io.emit('library_updated', { songs: SONG_LIBRARY });
 
