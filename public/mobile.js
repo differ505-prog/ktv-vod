@@ -694,19 +694,21 @@ function attachNowPlayingLongPress() {
   card.removeEventListener('touchend', _npEndPress);
   card.removeEventListener('touchcancel', _npEndPress);
   card.removeEventListener('mousedown', _npStartPress);
-  card.removeEventListener('mouseup', _npEndPress);
-  card.removeEventListener('mouseleave', _npEndPress);
+  document.removeEventListener('mouseup', _npEndPress);
+  document.removeEventListener('touchend', _npEndPress);
 
   card.addEventListener('touchstart', _npStartPress, { passive: true });
   card.addEventListener('touchmove', _npMovePress, { passive: true });
   card.addEventListener('touchend', _npEndPress);
   card.addEventListener('touchcancel', _npEndPress);
   card.addEventListener('mousedown', _npStartPress);
-  card.addEventListener('mouseup', _npEndPress);
-  card.addEventListener('mouseleave', _npEndPress);
+  // 桌面: mouseup 可能滑出卡片, 改用 document 等級
+  document.addEventListener('mouseup', _npEndPress);
+  document.addEventListener('touchend', _npEndPress);
 }
 
 function _npStartPress(e) {
+  const isTouch = !!e.touches;
   if (e.target.closest('button, a, input, select, textarea')) return;
   npPressStart = Date.now();
   npLongPressed = false;
@@ -714,7 +716,7 @@ function _npStartPress(e) {
     npPressX = e.touches[0].clientX;
     npPressY = e.touches[0].clientY;
   }
-  console.log('[LP] touchstart', npPressStart, 'target:', e.target.tagName, e.target.className);
+  console.log('[LP] start', isTouch ? 'touch' : 'mouse', 'target:', e.target.tagName, e.target.className.toString().slice(0, 60));
 }
 
 function _npMovePress(e) {
@@ -727,21 +729,21 @@ function _npMovePress(e) {
 }
 
 function _npEndPress() {
-  console.log('[LP] touchend, npPressStart:', npPressStart);
+  console.log('[LP] end, npPressStart:', npPressStart, 'hostModeUnlocked:', hostModeUnlocked, 'currentSong:', !!currentSong);
   if (npPressStart === 0) return;
   const held = Date.now() - npPressStart;
-  console.log('[LP] held:', held + 'ms', held < 600 ? '→ ignored (<600ms)' : '→ TRIGGER!');
+  console.log('[LP] held:', held + 'ms', held < 600 ? '→ ignored' : '→ TRIGGER!');
   npPressStart = 0;
   if (held < 600) return;
 
   npLongPressed = true;
   if ('vibrate' in navigator) navigator.vibrate(40);
   if (!hostModeUnlocked) {
-    console.log('[LP] → show toast (not unlocked)');
+    console.log('[LP] → toast (locked)');
     showToast('🔒 需主揪模式解鎖才能永久刪除', 'info');
     return;
   }
-  if (!currentSong) { console.log('[LP] no currentSong'); return; }
+  if (!currentSong) { console.log('[LP] no song'); return; }
   nowPlayingCard.classList.add('np-hold-pulse');
   setTimeout(() => nowPlayingCard.classList.remove('np-hold-pulse'), 450);
   console.log('[LP] → openDeleteConfirmModal!');
