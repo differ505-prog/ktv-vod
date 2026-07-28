@@ -202,6 +202,8 @@ function initAudioGraph() {
     video.removeAttribute('src');
     video.load();
     currentSongRef = null;
+    // 重置 ended guard，避免 stop 後殘留的 error 延遲 callback 觸發
+    _songEndedEmitted = false;
     // 清除倒數
     clearInterval(countdownInterval);
     clearTimeout(hideCountdownTimer);
@@ -276,6 +278,9 @@ function initAudioGraph() {
 
     // 記住當前 song（含 srcVocalOff），給 change_audio_mode 切換音軌用
     currentSongRef = song;
+
+    // 重置 ended/error guard，避免上一首歌的延迟回调干扰新歌
+    _songEndedEmitted = false;
 
     console.log('[playSong] 收到 song =', song.src, 'audioUnlocked =', audioUnlocked);
 
@@ -401,15 +406,25 @@ function initAudioGraph() {
   }, 3000);
 
   // ===== video 事件 =====
-  video.addEventListener('ended', () => {
+  // guard: 防止 ended 和 error (1500ms延迟) 同时触发导致 song_ended 发两次
+  let _songEndedEmitted = false;
+  function _emitSongEnded() {
+    if (_songEndedEmitted) return;
+    _songEndedEmitted = true;
     console.log('[video] ended → 通知後端');
     socket.emit('song_ended');
-  });
+  }
+
+  video.addEventListener('ended', _emitSongEnded);
 
   video.addEventListener('error', (e) => {
     console.error('[video] error', e);
-    // 來源錯誤時也通知後端，避免卡死
-    setTimeout(() => socket.emit('song_ended'), 1500);
+    // 来源错误时也通知后端，避免卡死；1.5s delay 给缓冲恢复最后机会
+    setTimeout(() => {
+      if (!_songEndedEmitted) {
+        _emitSongEnded();
+      }
+    }, 1500);
   });
 
 // ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
