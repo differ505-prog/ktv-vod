@@ -374,8 +374,28 @@ function rebuildLibrary() {
     return { changed: false, added: 0, removed: 0 };
   }
 
+  // 把舊 library 中用戶編輯過 title/artist 的記錄合並回 fresh
+  // (rebuildLibrary 只是重新掃描磁碟,磁碟上的 mp4 檔名不會變,變的只是 title/artist)
+  const previousEdits = new Map();
+  for (const s of SONG_LIBRARY) {
+    if (s.source === 'local' && s.src) {
+      previousEdits.set(s.src, { title: s.title, artist: s.artist });
+    }
+  }
+
+  // 套用到 fresh：舊 library 有編輯過 → 用舊值覆蓋 fresh 的自動解析結果
+  for (const s of fresh) {
+    if (s.source === 'local') {
+      const saved = previousEdits.get(s.src);
+      if (saved) {
+        s.title = saved.title;
+        s.artist = saved.artist;
+      }
+    }
+  }
+
   SONG_LIBRARY = fresh;
-  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged });
+  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged, restoredEdits: previousEdits.size });
   io.emit('library_updated', { songs: SONG_LIBRARY });
 
   // ===== 新歌自動加入播放清單 =====
