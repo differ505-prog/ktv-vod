@@ -207,6 +207,8 @@ function initAudioGraph() {
     // 清除倒數
     clearInterval(countdownInterval);
     clearTimeout(hideCountdownTimer);
+    shownThresholds = new Set(); // 防止过渡期间 callback 仍觸發顯示
+    lastReportedRemaining = Infinity;
     nextSongCard.style.opacity = '0';
     // 顯示黑幕，隱藏待機畫面
     standbyScreen.style.display = 'none';
