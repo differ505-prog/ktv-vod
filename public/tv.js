@@ -31,6 +31,18 @@
   const songAddedToast = document.getElementById('songAddedToast');
   const songAddedToastTitle = document.getElementById('songAddedToastTitle');
 
+  // ===== 下一首倒數卡片 =====
+  const nextSongCard = document.getElementById('nextSongCard');
+  const nextSongCountdownNum = document.getElementById('nextSongCountdownNum');
+  const nextSongCardTitle = document.getElementById('nextSongCardTitle');
+  const nextSongCardArtist = document.getElementById('nextSongCardArtist');
+  const queueEmptyBar = document.getElementById('queueEmptyBar');
+
+  // ===== 下一首倒數狀態 =====
+  let nextSong = null;          // playlist_updated 裡的下一首
+  let countdownInterval = null;
+  const COUNTDOWN_TRIGGERS = [30, 15, 5]; // 秒數閾值
+
   // ===== 沉浸模式狀態 =====
   let immersive = false;          // 是否進入沉浸模式 (CSS class)
   // Mobile 發請求時,server 會廣播 toggle_immersive 給所有 client (含 tv 自己回報的)。
@@ -190,6 +202,10 @@ function initAudioGraph() {
     video.removeAttribute('src');
     video.load();
     currentSongRef = null;
+    // 清除倒數
+    clearInterval(countdownInterval);
+    clearTimeout(hideCountdownTimer);
+    nextSongCard.style.opacity = '0';
     // 顯示黑幕，隱藏待機畫面
     standbyScreen.style.display = 'none';
     transitionOverlay.style.opacity = '1';
@@ -224,6 +240,17 @@ function initAudioGraph() {
     console.log('[Socket] 有人點歌：', title, 'by', addedBy);
     const label = addedBy ? `${title}（${addedBy}）` : title;
     showSongAddedToast(label || '新點播');
+  });
+
+  // 歌單更新：記住下一首，用於倒數提示
+  socket.on('playlist_updated', ({ playlist, currentSong } = {}) => {
+    nextSong = (playlist && playlist.length > 0) ? playlist[0] : null;
+    // 歌單空了：當 currentSong 播完、queue 也空的時候顯示 bar
+    if (!nextSong && !currentSong) {
+      queueEmptyBar.style.opacity = '1';
+    } else {
+      queueEmptyBar.style.opacity = '0';
+    }
   });
 
   // 手動喚醒 (邀請朋友): 手機端按「顯示 QR」→ server 廣播給 tv
@@ -297,8 +324,66 @@ function initAudioGraph() {
       }
     };
 
-    // canplay 之後再播,這時 buffer 已經有資料
+    // canplay 之後再播，這時 video.duration 已可用
     video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
+
+    // 倒數提示：canplay 時 duration 就緒，這裡啟動倒數計時
+    video.addEventListener('canplay', () => {
+      startNextSongCountdown();
+    }, { once: true });
+  }
+
+  // ===== 下一首倒數邏輯 =====
+  // 每次播新歌就重設倒數計時器（用 setInterval 檢查剩餘時間）
+  let shownThresholds = new Set(); // 避免同一閾值重複觸發
+  let hideCountdownTimer = null;
+  let lastReportedRemaining = Infinity;
+
+  function startNextSongCountdown() {
+    clearInterval(countdownInterval);
+    clearTimeout(hideCountdownTimer);
+    shownThresholds = new Set();
+    lastReportedRemaining = Infinity;
+    nextSongCard.style.opacity = '0';
+
+    countdownInterval = setInterval(() => {
+      // 需要有效 duration 且影片正在播
+      if (!video.duration || video.duration <= 0 || video.paused || !video.src) return;
+      const remaining = video.duration - video.currentTime;
+      if (remaining <= 0 || remaining > video.duration) {
+        clearInterval(countdownInterval);
+        nextSongCard.style.opacity = '0';
+        return;
+      }
+      // 每秒（實際剩餘時間變化）才處理，避免過度觸發
+      if (Math.abs(remaining - lastReportedRemaining) < 0.9) return;
+      lastReportedRemaining = remaining;
+
+      for (const threshold of COUNTDOWN_TRIGGERS) {
+        if (remaining <= threshold && !shownThresholds.has(threshold)) {
+          shownThresholds.add(threshold);
+          triggerCountdownNotification(threshold);
+        }
+      }
+    }, 300); // 每 0.3 秒檢查
+  }
+
+  function triggerCountdownNotification(secondsLeft) {
+    // 沒有下一首 → 顯示「歌單空了」
+    if (!nextSong) {
+      nextSongCardTitle.textContent = '歌單空了';
+      nextSongCardArtist.textContent = '快去點歌吧 🎤';
+    } else {
+      nextSongCardTitle.textContent = nextSong.title || '—';
+      nextSongCardArtist.textContent = nextSong.artist || '—';
+    }
+    nextSongCountdownNum.textContent = secondsLeft;
+    nextSongCard.style.opacity = '1';
+
+    clearTimeout(hideCountdownTimer);
+    hideCountdownTimer = setTimeout(() => {
+      nextSongCard.style.opacity = '0';
+    }, 4000);
   }
 
   // 診斷 video 狀態 (協助找出為什麼沒畫面)

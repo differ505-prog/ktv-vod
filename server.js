@@ -1096,11 +1096,13 @@ function advanceToNextSong() {
   clearTimeout(songTimeout);
   const next = getNextSong();
   currentSong = next;
+  const now = Date.now();
 
-  io.emit('play_song', { currentSong });
+  io.emit('play_song', { currentSong, updatedAt: now });
   io.emit('playlist_updated', {
     playlist: [...playlist],
     currentSong,
+    updatedAt: now,
   });
   // 不廣播 audioMode，保持用戶當前設定不變
 

@@ -116,6 +116,21 @@
     showToast._t = setTimeout(() => toast.classList.add('hidden'), 1800);
   }
 
+  function triggerMobileNotification(secondsLeft, nextLabel) {
+    // 震動（需要 user gesture 觸發過一次後才有效）
+    if ('vibrate' in navigator) {
+      navigator.vibrate([200, 100, 200]);
+    }
+    // Web Notification
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('🎤 準備切歌', {
+        body: `${secondsLeft} 秒後：${nextLabel}`,
+        tag: 'next-song',
+        silent: true,
+      });
+    }
+  }
+
   // ===== Socket.io =====
   const socket = io({ reconnection: true });
 
@@ -153,13 +168,63 @@
     renderQueue();
     renderNowPlaying();
     renderSongs();
+    // 下一首倒數提示（mobile 端）
+    scheduleNextSongNotification(data);
   });
 
-  socket.on('play_song', ({ currentSong: cs }) => {
+  // ===== 下一首倒數提示（mobile）=====
+  let mobileCountdownInterval = null;
+  let mobileShownThresholds = new Set();
+
+  function scheduleNextSongNotification(data) {
+    clearInterval(mobileCountdownInterval);
+    mobileShownThresholds = new Set();
+
+    if (!data.currentSong || !data.currentSong.duration) return;
+
+    const duration = parseDurationToSeconds(data.currentSong.duration);
+    if (!duration || duration <= 0) return;
+
+    mobileCountdownInterval = setInterval(() => {
+      // 從 server 的 nowPlayingUpdatedAt 估算已播時間
+      const elapsed = getElapsedSongTime();
+      const remaining = duration - elapsed;
+      if (remaining <= 0) {
+        clearInterval(mobileCountdownInterval);
+        return;
+      }
+      for (const threshold of [30, 15, 5]) {
+        if (remaining <= threshold && !mobileShownThresholds.has(threshold)) {
+          mobileShownThresholds.add(threshold);
+          const next = (data.playlist && data.playlist.length > 0) ? data.playlist[0] : null;
+          const nextLabel = next ? `下一首：${next.title}` : '快去點歌吧 🎤';
+          triggerMobileNotification(threshold, nextLabel);
+        }
+      }
+    }, 1000);
+  }
+
+  function parseDurationToSeconds(dur) {
+    if (!dur) return null;
+    if (typeof dur === 'number') return dur;
+    const parts = String(dur).split(':').map(Number);
+    if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+    if (parts.length === 2) return parts[0]*60 + parts[1];
+    return parseFloat(dur) || null;
+  }
+
+  // 用 server 的 nowPlayingUpdatedAt 推算已播秒數（client 端時間）
+  let serverNowPlayingAt = Date.now();
+  function getElapsedSongTime() {
+    return Math.floor((Date.now() - serverNowPlayingAt) / 1000);
+  }
+
+  socket.on('play_song', ({ currentSong: cs, updatedAt }) => {
     if (cs) {
       currentSong = cs;
       renderNowPlaying();
     }
+    if (updatedAt) serverNowPlayingAt = updatedAt;
   });
 
   socket.on('change_audio_mode', ({ audioMode: m }) => {

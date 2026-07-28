@@ -246,6 +246,21 @@
     </div>
   </div>
 
+  <!-- 下一首倒數卡片 -->
+  <div id="nextSongCard" class="fixed inset-0 z-30 flex items-center justify-center pointer-events-none opacity-0 transition-opacity duration-500">
+    <div class="panel panel-glow rounded-3xl px-8 py-6 text-center max-w-sm shadow-2xl">
+      <div id="nextSongCountdownNum" class="text-6xl font-bold text-pink-400 glow-text mb-2">30</div>
+      <div class="text-xs text-gray-400 uppercase tracking-widest mb-3">即將播放</div>
+      <div id="nextSongCardTitle" class="text-xl font-bold glow-text truncate">—</div>
+      <div id="nextSongCardArtist" class="text-sm text-gray-300 truncate">—</div>
+    </div>
+  </div>
+
+  <!-- 歌單空了警告 bar -->
+  <div id="queueEmptyBar" class="fixed bottom-0 left-0 right-0 z-20 bg-gradient-to-r from-pink-600 to-purple-600 text-white text-center py-2 text-sm font-medium tracking-wide opacity-0 transition-opacity duration-300 pointer-events-none">
+    <i class="fa-solid fa-triangle-exclamation mr-2"></i>歌單空了，去點歌吧！
+  </div>
+
   <!-- 「已點播：xxx」toast -->
   <div id="songAddedToast" class="panel panel-glow rounded-2xl px-6 py-3">
     <div class="flex items-center gap-3 text-base">
