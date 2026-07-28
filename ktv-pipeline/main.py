@@ -547,7 +547,7 @@ def stage_mix_and_encode(
             f"{v_cc}"
             "[a_cc]pan=mono|c0=0.5*c0+0.5*c1[acc_mono];"
             "[v_cc]pan=mono|c0=0.5*c0+0.5*c1[voc_mono];"
-            "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo[out]"
+            "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo,ladspa=libloudnorm-peak=1:measurement=/dev/null:I=-14:TP=-1.5:LRA=11[out]"
         ),
         "-map", "0:v",
         "-map", "[out]",
