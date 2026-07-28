@@ -316,29 +316,27 @@ function initAudioGraph() {
     video.src = tvSrc;
     video.loop = false;
 
-    // 不等 canplay — 直接嘗試播。失敗了再說。
-    const tryPlay = (reason) => {
+    // canplay 之後再播，這時 video.duration 已可用
+    video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
+
+    // 倒數提示：直接啟動，interval 內部會等 video.duration 就緒
+    startNextSongCountdown();
+
+    // 嘗試播放（若 canplay 已過則直接播）
+    tryPlay('playSong');
+
+    function tryPlay(reason) {
       console.log(`[video] tryPlay() 因為: ${reason}, audioCtx.state=${audioCtx ? audioCtx.state : 'null'}`);
       const p = video.play();
       if (p && p.catch) {
         p.then(() => console.log('[video] play() 成功 (' + reason + ')'))
          .catch((err) => {
             console.warn('[video] play() 失敗 (' + reason + ')：', err.name, err.message);
-            // 不管哪種失敗都先試著顯示 overlay,user 點一下會 retry
             pendingFirstPlay = true;
             unlockOverlay.style.display = 'flex';
           });
       }
-    };
-
-    // canplay 之後再播，這時 video.duration 已可用
-    video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
-
-    // 倒數提示：canplay 時 duration 就緒，這裡啟動倒數計時
-    video.addEventListener('canplay', () => {
-      startNextSongCountdown();
-    }, { once: true });
-  }
+    }
 
   // ===== 下一首倒數邏輯 =====
   // 每次播新歌就重設倒數計時器（用 setInterval 檢查剩餘時間）
