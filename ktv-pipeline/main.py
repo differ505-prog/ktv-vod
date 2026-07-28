@@ -17,6 +17,7 @@ KTV 點歌系統的幕後處理腳本
 import os
 import re
 import sys
+import json
 import logging
 import shutil
 import subprocess
@@ -531,35 +532,73 @@ def stage_mix_and_encode(
     # -i 1: 伴奏 (no_vocals) → 混成 mono → 放左聲道
     # -i 2: 人聲 (vocals)    → 混成 mono → 放右聲道
     # 用 join 把兩個 mono 流合成一個 stereo: L=伴奏, R=人聲
-    cmd = [
-        "ffmpeg", "-y",
-    ]
-    if float(video_offset) != 0.0:
-        cmd.extend(["-itsoffset", video_offset])
-    
-    cmd.extend([
-        "-i", str(video_path),
-        "-i", str(no_vocals_path),
-        "-i", str(vocals_path),
-        "-filter_complex",
-        (
-            f"{a_cc}"
-            f"{v_cc}"
-            "[a_cc]pan=mono|c0=0.5*c0+0.5*c1[acc_mono];"
-            "[v_cc]pan=mono|c0=0.5*c0+0.5*c1[voc_mono];"
-            "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo,ladspa=libloudnorm-peak=1:measurement=/dev/null:I=-14:TP=-1.5:LRA=11[out]"
-        ),
-        "-map", "0:v",
-        "-map", "[out]",
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "192k",
-        "-ar", "44100",
-        "-ac", "2",
-        "-movflags", "+faststart",
-        str(output_path),
-    ])
 
     try:
+        # ---- Pass 1: 測量音頻 loudness ----
+        measure_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(no_vocals_path),
+            "-i", str(vocals_path),
+            "-filter_complex",
+            (
+                f"{a_cc.replace('[a_cc]', '[acc_src]')}"
+                f"{v_cc.replace('[v_cc]', '[voc_src]')}"
+                "[acc_src]pan=mono|c0=0.5*c0+0.5*c1[acc_mono];"
+                "[voc_src]pan=mono|c0=0.5*c0+0.5*c1[voc_mono];"
+                "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo,"
+                "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json[out]"
+            ),
+            "-map", "[out]",
+            "-f", "null",
+            "-",
+        ]
+        logger.info("[Loudnorm] Pass 1: 測量音頻 loudness...")
+        m_result = subprocess.run(
+            measure_cmd, capture_output=True, text=True, timeout=3600
+        )
+        measured = {}
+        if m_result.returncode == 0:
+            match = re.search(r"\{[^}]+\}", m_result.stderr)
+            if match:
+                measured = json.loads(match.group())
+                logger.info(f"[Loudnorm] Pass 1 測量結果: {measured}")
+        if not measured.get("input_i"):
+            logger.warning("[Loudnorm] Pass 1 測量失敗，使用預設 target 值")
+            measured = {"input_i": "-14", "input_tp": "-1.5", "input_lra": "11"}
+
+        # ---- Pass 2: 用測量結果正式合成 mp4 ----
+        cmd = [
+            "ffmpeg", "-y",
+        ]
+        if float(video_offset) != 0.0:
+            cmd.extend(["-itsoffset", video_offset])
+
+        cmd.extend([
+            "-i", str(video_path),
+            "-i", str(no_vocals_path),
+            "-i", str(vocals_path),
+            "-filter_complex",
+            (
+                f"{a_cc}"
+                f"{v_cc}"
+                "[a_cc]pan=mono|c0=0.5*c0+0.5*c1[acc_mono];"
+                "[v_cc]pan=mono|c0=0.5*c0+0.5*c1[voc_mono];"
+                "[acc_mono][voc_mono]join=inputs=2:channel_layout=stereo,"
+                f"loudnorm=I=-14:TP=-1.5:LRA=11:"
+                f"measured_I={measured.get('input_i','')}:"
+                f"measured_TP={measured.get('input_tp','')}:"
+                f"measured_LRA={measured.get('input_lra','')}[out]"
+            ),
+            "-map", "0:v",
+            "-map", "[out]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-ar", "44100",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
+
         result = subprocess.run(
             cmd,
             capture_output=True,
