@@ -34,6 +34,14 @@
   const songAddedToast = document.getElementById('songAddedToast');
   const songAddedToastTitle = document.getElementById('songAddedToastTitle');
 
+  // SONG_LIBRARY 本地快取:從 /api/songs 載入完整列表(含 audioOriginal/audioVocalOff),
+  // 當 socket play_song 推的 currentSong 漏欄位時可以補上
+  let SONG_LIBRARY_CACHE = [];
+  fetch('/api/songs').then(r => r.json()).then(d => {
+    SONG_LIBRARY_CACHE = d.songs || [];
+    console.log('[tv] 載入歌曲庫快取:', SONG_LIBRARY_CACHE.length, '首');
+  }).catch(e => console.warn('[tv] 載入歌曲庫失敗:', e));
+
   // ===== 下一首倒數卡片 =====
   const nextSongCard = document.getElementById('nextSongCard');
   const nextSongCountdownNum = document.getElementById('nextSongCountdownNum');
@@ -230,14 +238,25 @@ function initAudioGraph() {
       currentAudioMode = state.audioMode;
     }
     if (state.currentSong) {
-      playSong(state.currentSong);
+      playSong(enrichSong(state.currentSong));
     }
   });
+
+  // 從本地 SONG_LIBRARY_CACHE 補上 audioOriginal/audioVocalOff 欄位
+  // (socket play_song 推的 currentSong 偶爾會漏,例如 server 重啟前的殘留 playlist)
+  function enrichSong(song) {
+    if (!song || !song.id) return song;
+    const full = SONG_LIBRARY_CACHE.find((s) => s.id === song.id);
+    if (!full) return song;
+    if (!song.audioOriginal && full.audioOriginal) song.audioOriginal = full.audioOriginal;
+    if (!song.audioVocalOff && full.audioVocalOff) song.audioVocalOff = full.audioVocalOff;
+    return song;
+  }
 
   // 播放指令
   socket.on('play_song', ({ currentSong }) => {
     console.log('[Socket] 播放：', currentSong);
-    playSong(currentSong);
+    playSong(enrichSong(currentSong));
   });
 
   // 歌曲 audio 預抽完成 → 若仍在 audio mode 且播同一首歌,重啟 bgAudio
