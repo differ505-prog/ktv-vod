@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { Server } = require('socket.io');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
@@ -1152,6 +1152,55 @@ io.on('connection', (socket) => {
     const ms = Math.min(60000, Math.max(3000, Number(durationMs) || 15000));
     log('info', 'TV 顯示 QR', { durationMs: ms });
     io.emit('show_qr', { durationMs: ms });
+  });
+
+  // 補抽 audio: 切到音樂模式時若發現 song 缺 audioOriginal/audioVocalOff,
+  // tv 端會 emit request_audio_extract,server 用 ffmpeg 即時抽 audioOriginal
+  // (伴奏版本留給背景 pipeline 處理)
+  socket.on('request_audio_extract', ({ songId }) => {
+    const song = SONG_LIBRARY.find((s) => s.id === songId);
+    if (!song || song.source !== 'local') {
+      log('warn', 'request_audio_extract: 找不到 song 或非本地', { songId });
+      return;
+    }
+    const audioOrigName = `${song.raw || song.id.replace(/^local-/, '')}.m4a`;
+    const target = path.join(AUDIO_DIR, audioOrigName);
+    if (fs.existsSync(target)) {
+      log('info', 'audio 檔已存在, 跳過', { audioOrigName });
+      return;
+    }
+    const srcMp4 = song.src ? decodeURIComponent(new URL(song.src, 'http://x').pathname.replace(/^\/videos\//, '')) : null;
+    if (!srcMp4) {
+      log('warn', 'request_audio_extract: 找不到 mp4', { songId });
+      return;
+    }
+    const srcPath = path.join(VIDEO_DIR, srcMp4);
+    if (!fs.existsSync(srcPath)) {
+      log('warn', 'request_audio_extract: mp4 不存在', { srcPath });
+      return;
+    }
+    log('info', '開始抽 audioOriginal', { song: song.title, srcPath, target });
+    // ffmpeg -i <mp4> -vn -ac 2 -ar 44100 -ab 128k -f ipod <m4a>
+    const ff = spawn('ffmpeg', [
+      '-y', '-i', srcPath,
+      '-vn', '-ac', '2', '-ar', '44100', '-ab', '128k',
+      '-f', 'ipod', target,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderrBuf = '';
+    ff.stderr.on('data', (b) => { stderrBuf += b.toString().slice(-2048); });
+    ff.on('close', (code) => {
+      if (code === 0 && fs.existsSync(target)) {
+        log('info', 'audioOriginal 抽完成', { audioOrigName, size: fs.statSync(target).size });
+        // 更新 SONG_LIBRARY 中的 song 物件
+        const idx = SONG_LIBRARY.findIndex((s) => s.id === songId);
+        if (idx >= 0) {
+          SONG_LIBRARY[idx].audioOriginal = `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioOrigName)}`;
+          io.emit('song_audio_ready', { songId, audioOriginal: SONG_LIBRARY[idx].audioOriginal });
+        }
+      } else {
+        log('error', 'ffmpeg 抽 audio 失敗', { code, err: stderrBuf.split('\n').slice(-5).join('\n') });
+      }
+    });
   });
 
   socket.on('song_ended', () => {

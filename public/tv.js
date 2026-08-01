@@ -240,6 +240,18 @@ function initAudioGraph() {
     playSong(currentSong);
   });
 
+  // 歌曲 audio 預抽完成 → 若仍在 audio mode 且播同一首歌,重啟 bgAudio
+  socket.on('song_audio_ready', ({ songId, audioOriginal }) => {
+    console.log('[Socket] song_audio_ready', { songId, audioOriginal });
+    if (currentSongRef && currentSongRef.id === songId && !currentSongRef.audioOriginal) {
+      currentSongRef.audioOriginal = audioOriginal;
+      if (audioMode) {
+        console.log('[bgAudio] song_audio_ready → 重試 playBgAudio');
+        playBgAudio(currentSongRef);
+      }
+    }
+  });
+
   // 停止指令 (切歌時) - 黑幕過場
   socket.on('stop_song', () => {
     console.log('[Socket] 停止');
@@ -587,8 +599,16 @@ let audioCurrentTrack = 'original'; // 記住 audio-mode 目前播原唱還是�
 function playBgAudio(song) {
   if (!song) return;
   const src = getAudioModeSrc(song, audioCurrentTrack);
+  console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode });
   if (!src) {
-    console.warn('[bgAudio] 此歌沒有預抽的 .m4a (audioOriginal/audioVocalOff),跳過背景播放');
+    // 沒有預抽 m4a → 退而求其次,讓 <video> 繼續播 (但 iOS 鎖屏會停)。
+    // 顯示一條非阻擋 toast,告訴 user 此歌暫不支援背景播放。
+    // 同時通知 server 用 ffmpeg 即時補抽 audioOriginal (給未來這首歌或下一輪用)
+    console.warn('[bgAudio] 此歌沒有預抽的 .m4a (audioOriginal/audioVocalOff),改用 video 繼續播 (鎖屏會停)');
+    showAudioModeFallbackToast(song);
+    if (socket && song.id && song.source === 'local') {
+      socket.emit('request_audio_extract', { songId: song.id });
+    }
     return;
   }
   // iOS PWA 切歌根因: 設定 src → play() 太快,iOS 還在 fetch 新資源時丟
@@ -597,27 +617,31 @@ function playBgAudio(song) {
   const srcFile = src.split('/').pop();
   if (bgAudio.src && bgAudio.src.endsWith(srcFile)) {
     // src 沒變 (change_audio_mode 同首歌切軌) — resume
-    if (bgAudio.paused) bgAudio.play().catch(() => {});
+    console.log('[bgAudio] 同 src,只 resume');
+    if (bgAudio.paused) bgAudio.play().then(() => {
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    }).catch((e) => console.warn('[bgAudio] resume 失敗:', e));
     return;
   }
   bgAudio.src = src;
   bgAudio.loop = false;
   // 不要先設 currentTime=0 — 設了會干擾 iOS 的 internal buffering
   let started = false;
-  const tryStart = () => {
+  const tryStart = (why) => {
     if (started) return;
     started = true;
+    console.log('[bgAudio] tryStart 因為', why);
     bgAudio.currentTime = 0;
     updateMediaSession(song);
     bgAudio.play().then(() => {
-      // iOS PWA 鎖屏必須明確告知 playbackState,否則鎖屏卡片會停住
+      console.log('[bgAudio] play() 成功, paused=', bgAudio.paused, 'currentTime=', bgAudio.currentTime);
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }).catch((err) => console.warn('[bgAudio] play 失敗：', err.name, err.message));
   };
-  bgAudio.addEventListener('canplay', tryStart, { once: true });
-  bgAudio.addEventListener('loadeddata', tryStart, { once: true });
+  bgAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true });
+  bgAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true });
   // cached m4a 不會觸發 canplay → 1.5s 後主動試
-  setTimeout(tryStart, 1500);
+  setTimeout(() => tryStart('1500ms-timeout'), 1500);
 }
 
 function stopBgAudio() {
@@ -628,6 +652,28 @@ function stopBgAudio() {
     bgAudio.load();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
   } catch (e) {}
+}
+
+// audio-mode 沒有預抽 m4a 時,顯示 toast 提醒 user
+// (video 元素會繼續播,但 iOS PWA 鎖屏會停 — 後續可以排 pipeline 補抽)
+let _audioModeFallbackToastTimer = null;
+function showAudioModeFallbackToast(song) {
+  let toast = document.getElementById('audioModeFallbackToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'audioModeFallbackToast';
+    toast.className = 'fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 ' +
+      'bg-black/80 text-white px-5 py-3 rounded-xl text-base font-medium ' +
+      'shadow-2xl backdrop-blur-sm pointer-events-none transition-opacity duration-300';
+    toast.style.opacity = '0';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = `「${song.title || '此歌'}」尚未預抽背景音訊，鎖屏後會停止播放`;
+  toast.style.opacity = '1';
+  clearTimeout(_audioModeFallbackToastTimer);
+  _audioModeFallbackToastTimer = setTimeout(() => {
+    toast.style.opacity = '0';
+  }, 4000);
 }
 
 
