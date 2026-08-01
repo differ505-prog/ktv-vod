@@ -582,12 +582,12 @@ audioModeBtn.addEventListener('click', () => {
 
 // ===== 沉浸模式 QR (常駐顯示,可隨時掃碼) =====
 // 沉浸模式時,右下角自動顯示 QR Code — 點歌網址必須隨時可見
-const immersiveQrCode = document.getElementById('immersiveQrCode');
+const immersiveQrCode = document.getElementById('immersiveQrModal');
 
 // 監聽 body.immersive 變動,首次進入時渲染 QR (避免重複)
 const immersiveObserver = new MutationObserver(() => {
   if (document.body.classList.contains('immersive') && immersiveQrCode && !immersiveQrCode.dataset.rendered) {
-    renderQrInto(immersiveQrCode, 120);  // 小一點,沉浸模式不要干擾畫面
+    renderQrInto(immersiveQrCode, 72);  // 頂部小卡,只要能掃,不擋畫面
     immersiveQrCode.dataset.rendered = '1';
   }
 });

@@ -155,6 +155,8 @@
       opacity: 0;
       pointer-events: none;
     }
+    /* 沉浸模式時右下角 #qrPanel 完全消失,只留頂部小 QR */
+    body.immersive #qrPanel { display: none !important; }
     body.immersive #nowPlayingPanel.ui-shown,
     body.immersive #qrPanel.ui-shown,
     body.immersive #nowPlayingBar.ui-shown {
@@ -239,43 +241,22 @@
       transform: translateX(-50%) translateY(0);
     }
 
-    /* 沉浸模式 QR 直接顯示(不藏 modal) — 點歌網址必須隨時可見 */
+    /* 沉浸模式 QR — 與 systemTitle 並排左上角,小尺寸,最少干擾 (沉浸模式前隱藏) */
     #immersiveQrModal {
-      position: fixed;
-      bottom: 1.25rem;
-      right: 1.25rem;
-      z-index: 50;
       display: none;
-      background: rgba(20, 20, 28, 0.75);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 1.25rem;
-      padding: 1.25rem 1.5rem;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-      animation: qrMiniIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-    #immersiveQrModal.show { display: block; }
-    @keyframes qrMiniIn {
-      from { opacity: 0; transform: scale(0.9) translateY(10px); }
-      to   { opacity: 1; transform: scale(1) translateY(0); }
-    }
-    #immersiveQrModal h3 {
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 0.7rem;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      margin-bottom: 0.5rem;
-      text-align: center;
-    }
-    #immersiveQrModal h3 i { color: #f9a8d4; margin-right: 0.3rem; }
-    #immersiveQrModal .qr-stage {
-      background: white;
-      padding: 0.4rem;
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      padding: 0.35rem;
       border-radius: 0.5rem;
-      display: inline-block;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      opacity: 0.7;
+      transition: opacity 0.4s ease;
     }
+    #immersiveQrModal.qr-stage,
+    #immersiveQrModal .qr-stage { background: transparent; padding: 0; }
     body.immersive #immersiveQrModal { display: block; }
+    body.immersive #immersiveQrModal:hover { opacity: 1; }
   </style>
 </head>
 <body class="bg-black">
@@ -302,12 +283,15 @@
     </div>
   </div>
 
-  <!-- 左上角：系統標題 (常駐, 不淡出) -->
-  <div id="systemTitle" class="fixed top-4 left-4 panel rounded-xl px-4 py-2 flex items-center gap-3 z-10">
-    <div class="pulse-ring w-2.5 h-2.5 rounded-full status-dot"></div>
-    <span class="font-bold tracking-wider text-sm">
-      <i class="fa-solid fa-tv text-pink-400"></i> CouchMic <span class="text-gray-400 font-normal">· 播放端</span>
-    </span>
+  <!-- 左上角：系統標題 (常駐, 不淡出) ＋ 沉浸模式小 QR 並排其右 -->
+  <div id="topLeftBar" class="fixed top-4 left-4 z-10 flex items-center gap-3">
+    <div id="systemTitle" class="panel rounded-xl px-4 py-2 flex items-center gap-3">
+      <div class="pulse-ring w-2.5 h-2.5 rounded-full status-dot"></div>
+      <span class="font-bold tracking-wider text-sm">
+        <i class="fa-solid fa-tv text-pink-400"></i> CouchMic <span class="text-gray-400 font-normal">· 播放端</span>
+      </span>
+    </div>
+    <div id="immersiveQrModal" role="img" aria-label="點歌 QR Code" class="qr-stage"></div>
   </div>
 
   <!-- 右下角：QR Code (手機遙控) — 可由 mobile 請求叫醒 15 秒 -->
@@ -319,13 +303,7 @@
     <div id="qrUrl" class="text-[10px] text-gray-400 mt-2 text-center font-mono break-all"></div>
   </div>
 
-  <!-- 沉浸模式 QR (右下隨時可掃) -->
-  <div id="immersiveQrModal" role="dialog" aria-label="點歌 QR Code">
-    <h3><i class="fa-solid fa-mobile-screen"></i>掃碼加入點歌</h3>
-    <div class="qr-stage">
-      <div id="immersiveQrCode"></div>
-    </div>
-  </div>
+  <!-- 沉浸模式 QR 元素已整合至 #topLeftBar 內,與 systemTitle 並排 -->
 
   <!-- 沉浸模式時,底部中央保留「目前播放」bar -->
   <div id="nowPlayingBar" class="fixed bottom-8 left-1/2 -translate-x-1/2 panel panel-glow rounded-full px-8 py-3 max-w-2xl text-center">

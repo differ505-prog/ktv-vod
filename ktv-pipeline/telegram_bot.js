@@ -254,37 +254,49 @@ async function pollLoop() {
 }
 
 // ---------- job 完成通知輪詢 ----------
+async function checkOneJob(job) {
+  const jobId = job.jobId;
+  try {
+    const { status: httpStatus, data } = await checkJob(jobId);
+    if (httpStatus !== 200) {
+      console.error(`[job-check] ${jobId} HTTP ${httpStatus}: ${data.error || JSON.stringify(data)}`);
+      return;
+    }
+    const status = data.status || data.state;
+    if (status === 'completed' || status === 'done' || status === 'finished') {
+      try {
+        await tg('sendMessage', {
+          chat_id: job.chatId,
+          text: `✅ 完成: ${job.url}\n已加入點歌機, 可以去電視點了`,
+        });
+      } finally {
+        // 即使 Telegram 通知失敗, 也要 untrack + 保留 log, 避免卡住
+        untrackJob(jobId, job.chatId);
+        console.log(`[job-notify] done ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
+      }
+    } else if (status === 'failed' || status === 'error') {
+      try {
+        await tg('sendMessage', {
+          chat_id: job.chatId,
+          text: `❌ 失敗: ${job.url}\n${data.error || ''}`,
+        });
+      } finally {
+        untrackJob(jobId, job.chatId);
+        console.log(`[job-notify] failed ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
+      }
+    }
+  } catch (err) {
+    console.error('[job-check]', jobId, err.message);
+  }
+}
+
 async function jobCheckLoop() {
   while (running) {
     await sleep(JOB_CHECK_MS);
-    for (const job of sentJobs.values()) {
-      const jobId = job.jobId;
-      try {
-        const { status: httpStatus, data } = await checkJob(jobId);
-        if (httpStatus !== 200) {
-          console.error(`[job-check] ${jobId} HTTP ${httpStatus}: ${data.error || JSON.stringify(data)}`);
-          continue;
-        }
-        const status = data.status || data.state;
-        if (status === 'completed' || status === 'done' || status === 'finished') {
-          await tg('sendMessage', {
-            chat_id: job.chatId,
-            text: `✅ 完成: ${job.url}\n已加入點歌機, 可以去電視點了`,
-          });
-          untrackJob(jobId, job.chatId);
-          console.log(`[job-notify] done ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
-        } else if (status === 'failed' || status === 'error') {
-          await tg('sendMessage', {
-            chat_id: job.chatId,
-            text: `❌ 失敗: ${job.url}\n${data.error || ''}`,
-          });
-          untrackJob(jobId, job.chatId);
-          console.log(`[job-notify] failed ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
-        }
-      } catch (err) {
-        console.error('[job-check]', jobId, err.message);
-      }
-    }
+    // snapshot 一次, 避免迭代中 mutation 漏掉新加的 job
+    const snapshot = [...sentJobs.values()];
+    // 平行查詢 + 平行通知 (不受單一 await 阻塞其他 job)
+    await Promise.allSettled(snapshot.map(checkOneJob));
   }
 }
 
