@@ -214,6 +214,57 @@ app.get('/tv-videos/:filename', async (req, res) => {
   sendVideo(shadowPath);
 });
 
+/**
+ * /tv-videos-no-range/:filename
+ *   - 專供 Funnel 環境 (朋友家外網) 用,避免 Funnel proxy 對 Range request 的處理造成
+ *     <video> element 內建 audio decoder buffer underrun → 機械音。
+ *   - 一律 200 OK + 完整檔案,不設 Accept-Ranges,不處理 Range request。
+ *   - WebKit/Chromium 收到完整 mp4 時,moov 在檔頭已就緒,mp4 demuxer 預載完整檔後,
+ *     <video> 的 audio decoder 會切到大 buffer 模式,對後續抖動容忍度高很多。
+ *
+ * 變更紀錄:
+ *   - 2026-08-01 新增 (解決朋友家 Funnel + MV 模式 機械音)
+ */
+app.get('/tv-videos-no-range/:filename', (req, res) => {
+  const filename = req.params.filename;
+  if (!filename || filename.includes('..') || filename.includes('/')) {
+    return res.status(400).send('Invalid filename');
+  }
+
+  const origPath = path.join(VIDEO_DIR, filename);
+  if (!fs.existsSync(origPath)) {
+    return res.status(404).send('Not found');
+  }
+
+  // 取 TV_SYNC_OFFSET 偏移產出的 shadow 快取 (與 /tv-videos 同一份,共用 tv_cache dir)
+  const filePath = Math.abs(TV_SYNC_OFFSET) < 0.01
+    ? origPath
+    : path.join(TV_CACHE_DIR, `${TV_SYNC_OFFSET.toFixed(2)}_${filename}`);
+
+  if (!fs.existsSync(filePath)) {
+    // shadow 還沒產出就 fallback 回原檔 (沒 itsoffset 時也會到這)
+    return res.sendFile(origPath);
+  }
+
+  const stat = fs.statSync(filePath);
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Accept-Ranges', 'none'); // ← 明確告訴 Funnel proxy 不要 Range
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'public, max-age=86400'); // Funnel 環境下重複點歌不會再下載
+
+  // 整檔讀進記憶體一次送完,不走 stream + Range 的 buffer 模式
+  // 註:300MB 以下 mp4 都能這樣做,RAM 佔用可控
+  fs.readFile(filePath, (err, buffer) => {
+    if (err) {
+      log('error', '/tv-videos-no-range 讀檔失敗', { file: filePath, err: err.message });
+      return res.status(500).send('Internal Server Error');
+    }
+    res.end(buffer);
+  });
+});
+
 // ===== 工具 =====
 function log(level, msg, extra) {
   const order = { debug: 0, info: 1, warn: 2, error: 3 };

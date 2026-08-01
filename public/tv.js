@@ -392,7 +392,16 @@ function initAudioGraph() {
     // 將 /videos/ 抽換為 /tv-videos/ 以便觸發 JIT 陰影快取機制
     let tvSrc = song.src;
     if (tvSrc && tvSrc.startsWith('/videos/')) {
-      tvSrc = tvSrc.replace('/videos/', '/tv-videos/');
+      // 2026-08-01: Funnel 環境改用 no-range route,避免 Funnel proxy 對 Range request 的處理
+      // 造成 <video> element 內建 audio decoder buffer underrun → 機械音
+      const isFunnel = typeof location !== 'undefined'
+        && location.hostname.endsWith('.ts.net');
+      if (isFunnel) {
+        tvSrc = tvSrc.replace('/videos/', '/tv-videos-no-range/');
+        console.log('[playSong] Funnel 環境: 走 no-range 路徑 (避免機械音)');
+      } else {
+        tvSrc = tvSrc.replace('/videos/', '/tv-videos/');
+      }
       // 加上 query param，確保電視瀏覽器不會沿用舊的 Range Request 快取
       tvSrc += `?offset=${currentTvSyncOffset}`;
     }
