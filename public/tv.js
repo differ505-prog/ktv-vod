@@ -173,10 +173,31 @@ function initAudioGraph() {
         audioCurrentTrack = newTrack;
         const src = getAudioModeSrc(currentSongRef, newTrack);
         if (src) {
-          bgAudio.src = src;
-          bgAudio.currentTime = savedTime;
-          bgAudio.play().catch(() => {});
-          updateMediaSession(currentSongRef);
+          // 走 playBgAudio 統一 canplay-wait 路徑,避免 iOS PWA 拒絕
+          // (直接設 src → play() 在 change_audio_mode 會丟 NotAllowedError)
+          if (bgAudio.src && bgAudio.src.endsWith(src.split('/').pop())) {
+            // 同 src → 只更新 playbackState
+            bgAudio.play().then(() => {
+              if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+            }).catch(() => {});
+          } else {
+            bgAudio.src = src;
+            bgAudio.loop = false;
+            const restoreTime = savedTime;
+            let started = false;
+            const tryStart = () => {
+              if (started) return;
+              started = true;
+              bgAudio.currentTime = restoreTime;
+              updateMediaSession(currentSongRef);
+              bgAudio.play().then(() => {
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+              }).catch((err) => console.warn('[bgAudio] play 失敗：', err));
+            };
+            bgAudio.addEventListener('canplay', tryStart, { once: true });
+            bgAudio.addEventListener('loadeddata', tryStart, { once: true });
+            setTimeout(tryStart, 1500);
+          }
         }
       }
     }
@@ -225,8 +246,15 @@ function initAudioGraph() {
     try { video.pause(); } catch (e) {}
     video.removeAttribute('src');
     video.load();
-    // audio-mode 也要停 bgAudio
-    stopBgAudio();
+    // audio-mode: 只 pause bgAudio,不解綁 src/不 load()
+    // → server 緊接著 emit play_song → playBgAudio 會重新設 src,避免破壞
+    //   iOS PWA 的 user-activation credit (切下一首 src 立刻 play() 才不會被拒)。
+    // 非 audio-mode: bgAudio 沒在用,可以真的 stopBgAudio() 釋放
+    if (audioMode) {
+      try { bgAudio.pause(); } catch (e) {}
+    } else {
+      stopBgAudio();
+    }
     currentSongRef = null;
     // 重置 ended guard，避免 stop 後殘留的 error 延遲 callback 觸發
     _songEndedEmitted = false;
@@ -579,10 +607,12 @@ function playBgAudio(song) {
   const tryStart = () => {
     if (started) return;
     started = true;
-    // 切歌時 mediaSession metadata 必須在 play() 之前更新, iOS 鎖屏卡片才會正確
-    updateMediaSession(song);
     bgAudio.currentTime = 0;
-    bgAudio.play().catch((err) => console.warn('[bgAudio] play 失敗：', err));
+    updateMediaSession(song);
+    bgAudio.play().then(() => {
+      // iOS PWA 鎖屏必須明確告知 playbackState,否則鎖屏卡片會停住
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    }).catch((err) => console.warn('[bgAudio] play 失敗：', err.name, err.message));
   };
   bgAudio.addEventListener('canplay', tryStart, { once: true });
   bgAudio.addEventListener('loadeddata', tryStart, { once: true });
@@ -591,10 +621,13 @@ function playBgAudio(song) {
 }
 
 function stopBgAudio() {
-  // 注意:切歌時不要真的 stop bgAudio — server 會在 stop_song 後立刻 emit play_song,
-  // 我們只想換 src,不要破壞 iOS PWA 的 user-activation credit。
-  // 真正的 stop 只在「使用者主動暫停」或「audio mode 關閉」時呼叫。
-  try { bgAudio.pause(); } catch (e) {}
+  // 切回 TV mode 或 user 主動暫停時呼叫 — 真的要釋放 bgAudio
+  try {
+    bgAudio.pause();
+    bgAudio.removeAttribute('src');
+    bgAudio.load();
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+  } catch (e) {}
 }
 
 
