@@ -181,6 +181,39 @@
       pointer-events: none;
     }
 
+    /* ===== 音樂模式 (Audio-Only Mode) =====
+       隱藏 video 元素 (但繼續播 audio),改成黑底大字歌名畫面。
+       適用於：手機 PWA 背景播放、純粹聽歌場景。 */
+    body.audio-mode #player {
+      display: none !important;
+    }
+    body.audio-mode #nowPlayingPanel,
+    body.audio-mode #qrPanel,
+    body.audio-mode #nextSongCard,
+    body.audio-mode #standbyScreen,
+    body.audio-mode #immersiveBtn,
+    body.audio-mode #systemTitle {
+      display: none !important;
+    }
+    /* 音樂模式下保留底部 bar,顯示大歌名 */
+    body.audio-mode #nowPlayingBar {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      max-width: 90vw;
+      padding: 1.25rem 2rem;
+    }
+    body.audio-mode #nowPlayingBarTitle {
+      font-size: 1.5rem;
+    }
+    body.audio-mode #transitionOverlay {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+    body.audio-mode #songAddedToast {
+      /* toast 在音樂模式仍要保留通知用 */
+      display: block !important;
+    }
+
     /* 「已點播：xxx」toast (頂部中央) — 默認隐藏, 加上 .show 才顯示 */
     #songAddedToast {
       position: fixed;
@@ -281,10 +314,14 @@
   </div>
 
   <!-- 左下角:全螢幕控制按鈕 (TV 端主動入口) -->
-  <div class="fixed bottom-4 left-4 z-20">
+  <div class="fixed bottom-4 left-4 z-20 flex items-center gap-2">
     <button id="immersiveBtn" class="panel rounded-xl px-4 py-2.5 flex items-center gap-2 hover:bg-white/10 transition-all shadow-2xl">
       <i id="immersiveIcon" class="fa-solid fa-expand text-pink-400"></i>
       <span id="immersiveBtnLabel" class="text-sm font-medium">全螢幕</span>
+    </button>
+    <button id="audioModeBtn" class="panel rounded-xl px-4 py-2.5 flex items-center gap-2 hover:bg-white/10 transition-all shadow-2xl" title="切換音樂模式 (背景播放)">
+      <i class="fa-solid fa-headphones text-pink-400"></i>
+      <span id="audioModeBtnLabel" class="text-sm font-medium">音樂模式</span>
     </button>
   </div>
 

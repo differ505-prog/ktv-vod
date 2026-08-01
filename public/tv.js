@@ -28,6 +28,8 @@
   const immersiveDialog = document.getElementById('immersiveDialog');
   const immersiveDialogConfirm = document.getElementById('immersiveDialogConfirm');
   const immersiveDialogCancel = document.getElementById('immersiveDialogCancel');
+  const audioModeBtn = document.getElementById('audioModeBtn');
+  const audioModeBtnLabel = document.getElementById('audioModeBtnLabel');
   const songAddedToast = document.getElementById('songAddedToast');
   const songAddedToastTitle = document.getElementById('songAddedToastTitle');
 
@@ -316,27 +318,29 @@ function initAudioGraph() {
     video.src = tvSrc;
     video.loop = false;
 
-    // canplay 之後再播，這時 video.duration 已可用
-    video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
-
-    // 倒數提示：直接啟動，interval 內部會等 video.duration 就緒
-    startNextSongCountdown();
-
-    // 嘗試播放（若 canplay 已過則直接播）
-    tryPlay('playSong');
-
-    function tryPlay(reason) {
+    // 不等 canplay — 直接嘗試播。失敗了再說。
+    const tryPlay = (reason) => {
       console.log(`[video] tryPlay() 因為: ${reason}, audioCtx.state=${audioCtx ? audioCtx.state : 'null'}`);
       const p = video.play();
       if (p && p.catch) {
         p.then(() => console.log('[video] play() 成功 (' + reason + ')'))
          .catch((err) => {
             console.warn('[video] play() 失敗 (' + reason + ')：', err.name, err.message);
+            // 不管哪種失敗都先試著顯示 overlay,user 點一下會 retry
             pendingFirstPlay = true;
             unlockOverlay.style.display = 'flex';
           });
       }
-    }
+    };
+
+    // canplay 之後再播，這時 video.duration 已可用
+    video.addEventListener('canplay', () => tryPlay('canplay'), { once: true });
+
+    // 倒數提示：canplay 時 duration 就緒，這裡啟動倒數計時
+    video.addEventListener('canplay', () => {
+      startNextSongCountdown();
+    }, { once: true });
+  }
 
   // ===== 下一首倒數邏輯 =====
   // 每次播新歌就重設倒數計時器（用 setInterval 檢查剩餘時間）
@@ -427,6 +431,34 @@ function initAudioGraph() {
     }, 1500);
   });
 
+// ===== 音樂模式 (Audio-Only Mode) =====
+// 用途: 純聽歌場景 (背景播放、駕車聽歌)。
+// 行為: 隱藏 video 元素 (但 audio 繼續由 Web Audio graph 輸出),
+//       黑底大字顯示歌名 + 進度條,無 QR/無沉浸/無切換干擾。
+// 通訊: 完全沿用現有 socket events — server 不需任何改動。
+let audioMode = false;
+
+function setAudioMode(on) {
+  audioMode = !!on;
+  document.body.classList.toggle('audio-mode', audioMode);
+  if (audioModeBtnLabel) {
+    audioModeBtnLabel.textContent = audioMode ? 'TV 模式' : '音樂模式';
+  }
+  console.log('[音樂模式] 切換為', audioMode ? 'ON' : 'OFF');
+}
+
+// 從 URL query 自動進入音樂模式 (?mode=audio)
+// 讓 user 可以直接分享「音樂模式 URL」給朋友 / 設成 PWA 入口
+if (new URLSearchParams(window.location.search).get('mode') === 'audio') {
+  // 等 DOM ready 後再切換 (確保 CSS class 生效)
+  setTimeout(() => setAudioMode(true), 0);
+}
+
+audioModeBtn.addEventListener('click', () => {
+  setAudioMode(!audioMode);
+});
+
+
 // ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
 async function unlockAudioPlayback() {
     if (audioUnlocked) return;
@@ -435,14 +467,16 @@ async function unlockAudioPlayback() {
       initAudioGraph();
       if (audioCtx) {
         if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
+          await audioCtx.resume().catch(e => console.warn('[音訊] resume 失敗：', e));
         }
         // 播一個靜音 sample buffer (consumes the user-activation credit)
-        const buf = audioCtx.createBuffer(1, 1, 22050);
-        const src = audioCtx.createBufferSource();
-        src.buffer = buf;
-        src.connect(audioCtx.destination);
-        try { src.start(0); } catch (_) {}
+        try {
+          const buf = audioCtx.createBuffer(1, 1, 22050);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(audioCtx.destination);
+          src.start(0);
+        } catch (e) { console.warn('[音訊] 靜音 buffer 播放失敗：', e); }
       }
       audioUnlocked = true;
       unlockOverlay.style.display = 'none';
@@ -467,18 +501,32 @@ async function unlockAudioPlayback() {
       }
     } catch (err) {
       console.error('[播放] 解鎖失敗：', err);
+      unlockOverlay.style.display = 'flex';
     }
   }
 
   // 點 overlay 或整個 document 都算 gesture (但只第一次有用)
-  unlockOverlay.addEventListener('click', unlockAudioPlayback, { once: true });
+  unlockOverlay.addEventListener('click', () => {
+    try {
+      unlockAudioPlayback();
+    } catch (e) {
+      console.error('[播放] unlockOverlay 點擊失敗：', e);
+      unlockOverlay.addEventListener('click', () => {
+        try { unlockAudioPlayback(); } catch (err) { console.error('[播放] 重試失敗：', err); }
+      });
+    }
+  });
   // 額外保險：點文件任何地方也能解鎖
   document.addEventListener(
     'click',
     () => {
-      if (!audioUnlocked) unlockAudioPlayback();
-      if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+      try {
+        if (!audioUnlocked) unlockAudioPlayback();
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => {});
+        }
+      } catch (e) {
+        console.error('[播放] document click 解鎖失敗：', e);
       }
     },
     { once: false }
