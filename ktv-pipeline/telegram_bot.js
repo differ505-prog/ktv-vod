@@ -10,6 +10,9 @@
  * 取得 BOT_TOKEN: Telegram 找 @BotFather → /newbot
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('[skip] BOT_TOKEN 環境變數未設定 → Bot 不啟動');
@@ -28,6 +31,7 @@ const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 2000);   // Tele
 const JOB_CHECK_MS    = Number(process.env.JOB_CHECK_MS    || 30000);  // job 狀態輪詢
 const ALLOWED_USERS   = (process.env.ALLOWED_USERS || '')               // 可選白名單 (逗號分隔 Telegram user id)
   .split(',').map(s => s.trim()).filter(Boolean);
+const JOB_STORE_PATH  = process.env.JOB_STORE_PATH || '/data/telegram-jobs.json';
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
@@ -64,9 +68,49 @@ function isAllowed(userId) {
   return ALLOWED_USERS.length === 0 || ALLOWED_USERS.includes(String(userId));
 }
 
-// ---------- job 追蹤 (in-memory) ----------
-/** @type {Map<number, {url:string, jobId:string|null, chatId:number, sentAt:number}>} */
+// ---------- job 追蹤 (jobId + chatId 為 key,同一 chat 可同時追蹤多首) ----------
+/** @type {Map<string, {url:string, jobId:string, chatId:number, sentAt:number}>} */
 const sentJobs = new Map();
+
+function trackingKey(jobId, chatId) {
+  return `${jobId}:${chatId}`;
+}
+
+function loadJobs() {
+  try {
+    const jobs = JSON.parse(fs.readFileSync(JOB_STORE_PATH, 'utf8'));
+    if (!Array.isArray(jobs)) throw new Error('job store 必須是陣列');
+    for (const job of jobs) {
+      if (!job?.jobId || !job?.url || !Number.isFinite(job?.chatId)) continue;
+      sentJobs.set(trackingKey(String(job.jobId), job.chatId), { ...job, jobId: String(job.jobId) });
+    }
+    console.log(`[job-store] restored ${sentJobs.size} job(s)`);
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('[job-store] load failed:', err.message);
+  }
+}
+
+function saveJobs() {
+  try {
+    fs.mkdirSync(path.dirname(JOB_STORE_PATH), { recursive: true });
+    const tempPath = `${JOB_STORE_PATH}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify([...sentJobs.values()], null, 2));
+    fs.renameSync(tempPath, JOB_STORE_PATH);
+  } catch (err) {
+    console.error('[job-store] save failed:', err.message);
+  }
+}
+
+function trackJob(job) {
+  const normalized = { ...job, jobId: String(job.jobId) };
+  sentJobs.set(trackingKey(normalized.jobId, normalized.chatId), normalized);
+  saveJobs();
+}
+
+function untrackJob(jobId, chatId) {
+  sentJobs.delete(trackingKey(String(jobId), chatId));
+  saveJobs();
+}
 
 async function sendToKTV(url) {
   const r = await fetch(`${KTV_API}/api/process-youtube`, {
@@ -161,12 +205,14 @@ async function pollOnce() {
         continue;
       }
       if (status === 409 || data?.error === 'duplicate') {
-        const existingJobId = data.existing_job_id || data.jobId || '?';
+        const existingJobId = data.existing_job_id || data.jobId;
         await tg('sendMessage', {
           chat_id: chatId,
-          text: `此 URL 已在 pipeline queue 中\nJob: ${existingJobId}`,
+          text: `此 URL 已在 pipeline queue 中\nJob: ${existingJobId || '?'}`,
         });
-        sentJobs.set(chatId, { url, jobId: existingJobId, chatId, sentAt: Date.now() });
+        if (existingJobId) {
+          trackJob({ url, jobId: String(existingJobId), chatId, sentAt: Date.now() });
+        }
         continue;
       }
       if (!data.success) {
@@ -177,7 +223,11 @@ async function pollOnce() {
         continue;
       }
       const jobId = data.job_id || data.id || data.jobId;
-      sentJobs.set(chatId, { url, jobId, chatId, sentAt: Date.now() });
+      if (!jobId) {
+        throw new Error(`Pipeline 未回傳 job id: ${JSON.stringify(data)}`);
+      }
+      trackJob({ url, jobId: String(jobId), chatId, sentAt: Date.now() });
+      console.log(`[job-track] add ${jobId} chat=${chatId} total=${sentJobs.size}`);
       const queuePos = data.queue_position ? ` (queue 位置 #${data.queue_position})` : '';
       await tg('sendMessage', {
         chat_id: chatId,
@@ -207,26 +257,32 @@ async function pollLoop() {
 async function jobCheckLoop() {
   while (running) {
     await sleep(JOB_CHECK_MS);
-    for (const [chatId, job] of sentJobs.entries()) {
-      if (!job.jobId) continue;
+    for (const job of sentJobs.values()) {
+      const jobId = job.jobId;
       try {
-        const { data } = await checkJob(job.jobId);
+        const { status: httpStatus, data } = await checkJob(jobId);
+        if (httpStatus !== 200) {
+          console.error(`[job-check] ${jobId} HTTP ${httpStatus}: ${data.error || JSON.stringify(data)}`);
+          continue;
+        }
         const status = data.status || data.state;
         if (status === 'completed' || status === 'done' || status === 'finished') {
           await tg('sendMessage', {
-            chat_id: chatId,
+            chat_id: job.chatId,
             text: `✅ 完成: ${job.url}\n已加入點歌機, 可以去電視點了`,
           });
-          sentJobs.delete(chatId);
+          untrackJob(jobId, job.chatId);
+          console.log(`[job-notify] done ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
         } else if (status === 'failed' || status === 'error') {
           await tg('sendMessage', {
-            chat_id: chatId,
+            chat_id: job.chatId,
             text: `❌ 失敗: ${job.url}\n${data.error || ''}`,
           });
-          sentJobs.delete(chatId);
+          untrackJob(jobId, job.chatId);
+          console.log(`[job-notify] failed ${jobId} chat=${job.chatId} remaining=${sentJobs.size}`);
         }
       } catch (err) {
-        console.error('[job-check]', job.jobId, err.message);
+        console.error('[job-check]', jobId, err.message);
       }
     }
   }
@@ -236,6 +292,8 @@ async function jobCheckLoop() {
 console.log('[start] KTV Telegram Bot');
 console.log(`  KTV API: ${KTV_API}`);
 console.log(`  Allowed users: ${ALLOWED_USERS.length === 0 ? '(all)' : ALLOWED_USERS.join(',')}`);
+console.log(`  Job store: ${JOB_STORE_PATH}`);
+loadJobs();
 
 process.on('SIGINT',  () => { console.log('\n[stop] SIGINT');  running = false; });
 process.on('SIGTERM', () => { console.log('\n[stop] SIGTERM'); running = false; });

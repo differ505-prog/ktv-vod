@@ -68,8 +68,10 @@ services:
       - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
       - BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+      - JOB_STORE_PATH=/data/telegram-jobs.json
     volumes:
-      - ./telegram_bot.js:/app/telegram_bot.js:ro
+      - ./ktv-pipeline/telegram_bot.js:/app/telegram_bot.js:ro
+      - ./data/telegram-bot:/data
     networks:
       - ktv-net
     depends_on:
