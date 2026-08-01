@@ -814,4 +814,15 @@ async function unlockAudioPlayback() {
 
   // 滑鼠喚醒在 SmartFade 模組內已統一處理 (覆蓋沉浸 + 非沉浸)。
   // 舊的沉浸專屬邏輯已刪除,因為 SmartFade 模組會自動處理兩種狀態。
+
+  // ===== PWA Service Worker 註冊 =====
+  // iOS Safari 加入主畫面後背景播放音訊;Android Chrome 同樣支援。
+  // 失敗不影響主功能 (背景音樂仍可在 user 停留在頁面時運作)。
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('[PWA] SW 註冊失敗:', err);
+      });
+    });
+  }
 })();
