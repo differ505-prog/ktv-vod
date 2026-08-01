@@ -50,6 +50,32 @@ services:
         condition: service_started
 
   # ===========================================
+  # 3. KTV Telegram Bot - YouTube 網址自動 ingest
+  # ===========================================
+  # Bot 收 Telegram 訊息 → POST server.js /api/process-youtube
+  # 不掛不會影響 brain/pipeline,純獨立 service
+  # 停用: docker compose stop telegram-bot
+  telegram-bot:
+    image: node:20-bookworm-slim
+    container_name: ktv-telegram-bot
+    restart: unless-stopped
+    command: ["node", "/app/telegram_bot.js"]
+    working_dir: /app
+    environment:
+      - NODE_ENV=production
+      - KTV_API=http://ktv-brain:3000
+      - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:-change-me}
+      - BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+    volumes:
+      - ./ktv-pipeline/telegram_bot.js:/app/telegram_bot.js:ro
+    networks:
+      - ktv-net
+    depends_on:
+      ktv-brain:
+        condition: service_started
+
+  # ===========================================
   # 2. KTV Pipeline - Python 影音處理
   # ===========================================
   ktv-pipeline:
