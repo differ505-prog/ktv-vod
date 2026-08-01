@@ -563,16 +563,38 @@ function playBgAudio(song) {
     console.warn('[bgAudio] 此歌沒有預抽的 .m4a (audioOriginal/audioVocalOff),跳過背景播放');
     return;
   }
+  // iOS PWA 切歌根因: 設定 src → play() 太快,iOS 還在 fetch 新資源時丟
+  // NotAllowedError (非 user gesture)。解法: 等 canplay/loadedmetadata 後再 play,
+  // 並設 1.5s timeout 主動 retry (cached 資源不會觸發 canplay)。
+  const srcFile = src.split('/').pop();
+  if (bgAudio.src && bgAudio.src.endsWith(srcFile)) {
+    // src 沒變 (change_audio_mode 同首歌切軌) — resume
+    if (bgAudio.paused) bgAudio.play().catch(() => {});
+    return;
+  }
   bgAudio.src = src;
   bgAudio.loop = false;
-  bgAudio.play().catch((err) => console.warn('[bgAudio] play 失敗：', err));
-  updateMediaSession(song);
+  // 不要先設 currentTime=0 — 設了會干擾 iOS 的 internal buffering
+  let started = false;
+  const tryStart = () => {
+    if (started) return;
+    started = true;
+    // 切歌時 mediaSession metadata 必須在 play() 之前更新, iOS 鎖屏卡片才會正確
+    updateMediaSession(song);
+    bgAudio.currentTime = 0;
+    bgAudio.play().catch((err) => console.warn('[bgAudio] play 失敗：', err));
+  };
+  bgAudio.addEventListener('canplay', tryStart, { once: true });
+  bgAudio.addEventListener('loadeddata', tryStart, { once: true });
+  // cached m4a 不會觸發 canplay → 1.5s 後主動試
+  setTimeout(tryStart, 1500);
 }
 
 function stopBgAudio() {
+  // 注意:切歌時不要真的 stop bgAudio — server 會在 stop_song 後立刻 emit play_song,
+  // 我們只想換 src,不要破壞 iOS PWA 的 user-activation credit。
+  // 真正的 stop 只在「使用者主動暫停」或「audio mode 關閉」時呼叫。
   try { bgAudio.pause(); } catch (e) {}
-  bgAudio.removeAttribute('src');
-  bgAudio.load();
 }
 
 
