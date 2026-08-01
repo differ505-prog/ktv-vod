@@ -53,6 +53,16 @@ SSHPASS='05050505' rsync -avz \
 
 ---
 
+## C. 外網網址評估 (依 §5.4i, 2026-07-27 修憲)
+
+**KTV 外網 Funnel 已經用 Tailscale**: `https://vibe-nas.taila67710.ts.net/tv.html`
+設定細節在 `CONSTITUTION.md` §6。
+
+當 user 問「外網」「朋友家」「VPN」「隧道」「funnel」時，**先列 2~3 個可行方案並附評分**（Cloudflare Named Tunnel / Quick Tunnel / Tailscale Funnel / DDNS+port forward），再問 user 選哪個。
+同等評分下，**優先推薦朋友不必裝 App 的方案**（依 §5.4j）。
+
+---
+
 ## B. 對話效率規則 (依 §5.4)
 
 ### b1. 不要把專業需求誤判為 meta 議題

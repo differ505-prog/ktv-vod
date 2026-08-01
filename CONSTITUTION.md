@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-07-27（§5.1 修憲:優化/除錯完成「一律」自動 deploy,不再反問）
+最後更新：2026-07-27（§5.1 修憲:優化/除錯完成「一律」自動 deploy,不再反問；§6 新增:外網 Funnel + §5.4 評估前考慮更優解）
 
 ---
 
@@ -49,6 +49,46 @@
 | Homepage | `homepage` | 3000 | **不是 KTV**，不要從 port 3000 點歌 |
 
 使用者入口：`http://192.168.31.47:3001/mobile.html` / `http://192.168.31.47:3001/tv.html`
+
+## 6. 外網 Funnel（2026-07-27 確立）
+
+> 朋友在家用手機瀏覽器開 KTV，不必裝任何 App。
+
+### 6.1 現有 Funnel（Tailscale）
+
+| 用途 | URL | 對應 |
+|---|---|---|
+| **KTV** | `https://vibe-nas.taila67710.ts.net/tv.html` | host `:3001` |
+| Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | host `:8096` |
+
+### 6.2 設定指令（sudo）
+
+```bash
+# 一次性：讓當前使用者能改 tailscale serve config
+echo '05050505' | sudo -S tailscale set --operator=$(whoami)
+
+# 加 KTV Funnel（占 443，與 Jellyfin 8443 不衝突）
+echo '05050505' | sudo -S tailscale funnel --bg --https=443 http://localhost:3001
+
+# 檢視
+sudo tailscale funnel status
+```
+
+### 6.3 重要約束
+
+- Funnel 預設走 **HTTPS port 443**，沒法直接換 port — 想用其他 port 必須在 Tailscale admin 後台 ACL 開「allow funnel on port X」。
+- Jellyfin 已用 `:8443` Funnel，KTV 用 `:443`，兩者**不會互相覆蓋**。
+- Tailscale Funnel 的 `*.ts.net` 是**公開 HTTPS**，瀏覽器直接打就能連（朋友不必裝 Tailscale），跟 Quick Tunnel 行為類似。
+- KTV APK 用 `window.location.host` 組 server URL，所以連外網 Funnel 自動走 https，無需改 APK。
+
+### 6.4 為什麼不只用 Cloudflare Quick Tunnel？
+
+Quick Tunnel 網址每次重啟變動（`xxx.trycloudflare.com` 隨機子網域），不適合寫死或長期記憶。Tailscale Funnel 綁死 `vibe-nas.taila67710.ts.net`，永久不變。
+
+### 6.5 修憲與調整原則（依 §5.4i）
+
+- 改 Funnel 設定前，先比較 Cloudflare Named Tunnel（需註冊 CF 帳號，免費固定子網域）、Tailscale Funnel、DDNS+port forward 等方案評分，再決定。
+- 不要單純因為「現在能跑」就不評估替代方案。
 
 ## 4. 部署流程（已驗證）
 
@@ -144,6 +184,14 @@ user 已在 AskQuestion 表達意圖並選項 → **不要再列 Todo 重述同�
 - 表格用於資料對照（NAS 設定、評分結果），不要用於「做了什麼」。
 - 一行能說完的事不要用 bullet 列表。
 - 程式碼引用優先用 code reference（startLine:endLine:path），不要貼整段。
+
+#### i. 評估方案前，先掃「更優解」再給推薦（2026-07-27 修憲）
+當 user 詢問方案選擇時，**先主動列舉至少 2~3 個可行方案（含更優或更新興的技術）並附評分**，再問 user 選哪個。
+不要直接從「看起來最簡單」的單一方案下手；除非 user 已明示方向，否則一律給選擇題。
+理由：避免將來 user 發現有更好的方案時，回頭質疑為何當初沒考慮。
+
+#### j. 同樣評分時優先推「朋友不必額外裝東西」的方案（2026-07-27 修憲）
+當 KTV 服務要對外網（朋友家）開放時，**同等評分下優先選不要求 user 朋友裝 App / VPN / Tailscale** 的方案（例如 Cloudflare Named Tunnel / Quick Tunnel 勝過 Tailscale Funnel）。
 
 ### 5.2 其他不可違反規則（TBD）
 

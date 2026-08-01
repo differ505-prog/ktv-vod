@@ -1,0 +1,28 @@
+# =========================================================
+# CouchMic 外網通道 — Cloudflare Tunnel (Quick Tunnel)
+# 評分 9.5/10 — 免帳號, 免 port forward, 5 分鐘上線
+#
+# 用法:
+#   ssh vibe@192.168.31.47 'cd /home/vibe/ktv-vod && docker compose -f docker-compose.tunnel.yml up -d'
+#
+# 取得外網網址:
+#   docker logs -f ktv-tunnel   (看 "https://xxx.trycloudflare.com")
+#
+# 移除:
+#   docker compose -f docker-compose.tunnel.yml down
+# =========================================================
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2024.12.2
+    container_name: ktv-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://host.docker.internal:3001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ktv-net
+
+networks:
+  ktv-net:
+    name: ktv-net
+    external: true
