@@ -662,6 +662,75 @@ def cleanup_temp_files(
             lgr.error(f"[清理] 仍無法刪除：{e2}")
 
 
+def stage_extract_pwa_audio(
+    mp4_path: Path,
+    sanitized_name: str,
+    output_dir: Path,
+) -> tuple:
+    """
+    階段 4：PWA 背景音訊抽取 (iOS PWA 鎖屏播放用)
+
+    從已編碼的 mp4 (L=伴奏, R=人聲, stereo) 抽出兩條 mono m4a:
+      - <sanitized_name>.m4a            = L+R mixed → mono (原唱)
+      - <sanitized_name>-vocal-off.m4a  = L only → mono (伴奏)
+
+    為什麼需要 .m4a?
+      iOS Safari 的 <audio> element 不吃 mp4 container 裡的 AAC,
+      所以 audio-mode 即使加 MediaSession 也會回「格式不支援」而黑畫。
+      預先抽成 .m4a (AAC in MP4, audio-only) 才能在 iOS PWA 鎖屏播。
+
+    輸出位置: output_dir/../audio/ (與 mp4 同層,例如 processed → ../audio)
+    """
+    # AUDIO_DIR = output_dir/../audio (ktv-data/processed → ktv-data/audio)
+    audio_dir = output_dir.parent / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    out_orig = audio_dir / f"{sanitized_name}.m4a"
+    out_voc = audio_dir / f"{sanitized_name}-vocal-off.m4a"
+
+    # idempotent: 兩個檔案都已存在 → 跳過
+    if out_orig.exists() and out_voc.exists():
+        logger.info(f"[PWA-Audio] 已存在,跳過: {sanitized_name}")
+        return (out_orig, out_voc)
+
+    # 1) original = L+R mixed mono
+    cmd_orig = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(mp4_path),
+        "-filter_complex", "[0:a:0]pan=mono|c0=0.5*c0+0.5*c1[a]",
+        "-map", "[a]",
+        "-c:a", "aac", "-b:a", "192k",
+        "-vn", "-f", "mp4",
+        str(out_orig),
+    ]
+    r1 = subprocess.run(cmd_orig, capture_output=True, text=True, timeout=180)
+
+    # 2) vocal-off = L only mono
+    cmd_voc = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(mp4_path),
+        "-af", "pan=mono|c0=c0",
+        "-c:a", "aac", "-b:a", "192k",
+        "-vn", "-f", "mp4",
+        str(out_voc),
+    ]
+    r2 = subprocess.run(cmd_voc, capture_output=True, text=True, timeout=180)
+
+    if r1.returncode != 0:
+        logger.warning(f"[PWA-Audio] 原唱抽出失敗: {r1.stderr.strip()}")
+    if r2.returncode != 0:
+        logger.warning(f"[PWA-Audio] 伴奏抽出失敗: {r2.stderr.strip()}")
+
+    if r1.returncode == 0 and r2.returncode == 0:
+        logger.info(
+            f"[PWA-Audio] 抽出完成 {sanitized_name}: "
+            f"原唱={out_orig.stat().st_size / 1024 / 1024:.1f} MB, "
+            f"伴奏={out_voc.stat().st_size / 1024 / 1024:.1f} MB"
+        )
+
+    return (out_orig, out_voc)
+
+
 # ============================================================
 # 5. 主 Pipeline 函式
 # ============================================================
@@ -745,6 +814,21 @@ def process_ktv_video(
             sanitized_name=sanitized_name,
             output_dir=output_path,
         )
+
+        # 階段 4：PWA 背景音訊 (iOS PWA 鎖屏播放用)
+        # 從已編碼的 mp4 (L=伴奏, R=人聲, stereo) 抽出兩條 mono m4a:
+        #   - <name>.m4a            = L+R mixed → mono (原唱)
+        #   - <name>-vocal-off.m4a  = L only → mono (伴奏)
+        # iOS Safari <audio> 不吃 mp4 container 裡的 AAC,必須預先抽成 .m4a。
+        try:
+            stage_extract_pwa_audio(
+                mp4_path=final_path,
+                sanitized_name=sanitized_name,
+                output_dir=output_path,
+            )
+        except Exception as e:
+            # m4a 抽取失敗不影響主流程 (mp4 還在,user 仍可看)
+            logger.warning(f"[PWA-Audio] 抽出失敗（不影響主流程）: {e}")
 
         logger.info("=" * 50)
         logger.info("Pipeline 完成！")

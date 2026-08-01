@@ -32,6 +32,15 @@ const VIDEO_DIR = process.env.VIDEO_DIR || path.join(__dirname, 'videos');
 const VIDEO_URL_PREFIX = process.env.VIDEO_URL_PREFIX || '/videos';
 const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
 
+// ===== PWA 背景音訊 =====
+// iOS Safari <audio> 不吃 mp4 container 裡的 AAC,所以預先抽成 .m4a
+// (AAC in MP4 without video track) 才能在 iOS PWA 鎖屏播。
+//
+// 兩個變體:audio-original = 原唱 (L+R mixed mono), audio-vocal-off = 純伴奏 (L only mono)。
+// 由 ktv-pipeline/pwa_audio.py 抽出,放 NAS 的同一個 processed 目錄下的 audio 子目錄。
+const AUDIO_DIR = process.env.AUDIO_DIR || path.join(path.dirname(VIDEO_DIR), 'audio');
+const AUDIO_URL_PREFIX = '/audio';
+
 // ===== 三層防護 = Hard Delete 防呆 (Soft Delete + 密碼 + 不分檔不分伇列) =====
 // TRASH_DIR: 軟刪除把檔案移到這裡,而不是 fs.unlink — 误刪能救回。
 //   - 不直接暴露為 URL prefix (安全考量)
@@ -127,6 +136,25 @@ app.use(
       }
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  })
+);
+
+// PWA 背景音訊 (預先抽好的 .m4a,iOS PWA 鎖屏播放用)
+app.use(
+  AUDIO_URL_PREFIX,
+  express.static(AUDIO_DIR, {
+    fallthrough: true,
+    index: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.m4a')) {
+        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+      }
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      // .m4a 已被預先混合 (Vocal 已 baked-in),不需要 iOS 重新解 mp4 container
+      res.setHeader('Cache-Control', 'public, max-age=86400');
     },
   })
 );
@@ -308,6 +336,11 @@ function scanLocalVideos() {
         // 若對應的 *_vocal_off.mp4 存在，就帶 srcVocalOff 給 TV 切換
         const vocalOffName = `${raw}_vocal_off.mp4`;
         const vocalOffExists = fs.existsSync(path.join(VIDEO_DIR, vocalOffName));
+        // PWA 背景音訊:若有預先抽好的 .m4a (見 ktv-pipeline/pwa_audio.py),也帶給前端
+        const audioOrigName = `${raw}.m4a`;
+        const audioVocName = `${raw}-vocal-off.m4a`;
+        const audioOrigExists = fs.existsSync(path.join(AUDIO_DIR, audioOrigName));
+        const audioVocExists = fs.existsSync(path.join(AUDIO_DIR, audioVocName));
         local.push({
           id: `local-${String(idx).padStart(3, '0')}`,
           title,
@@ -315,6 +348,9 @@ function scanLocalVideos() {
           duration: '未知',
           src: toPublicUrl(f), // 透過 /videos prefix 提供
           srcVocalOff: vocalOffExists ? toPublicUrl(vocalOffName) : null,
+          // PWA 背景音訊:若有 .m4a 就提供 URL,iOS 鎖屏播放用
+          audioOriginal: audioOrigExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioOrigName)}` : null,
+          audioVocalOff: audioVocExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioVocName)}` : null,
           cover: null,
           source: 'local',
         });
@@ -584,9 +620,31 @@ app.post('/api/songs/delete', (req, res) => {
   const srcVocalBasename = song.srcVocalOff
     ? decodeURIComponent(path.basename(new URL(song.srcVocalOff, 'http://x').pathname))
     : null;
-  sources.push({ role: 'src', abs: path.join(VIDEO_DIR, srcBasename), fileName: srcBasename });
+  sources.push({ role: 'src', abs: path.join(VIDEO_DIR, srcBasename), fileName: srcBasename, dir: VIDEO_DIR });
   if (srcVocalBasename) {
-    sources.push({ role: 'srcVocalOff', abs: path.join(VIDEO_DIR, srcVocalBasename), fileName: srcVocalBasename });
+    sources.push({ role: 'srcVocalOff', abs: path.join(VIDEO_DIR, srcVocalBasename), fileName: srcVocalBasename, dir: VIDEO_DIR });
+  }
+
+  // PWA 背景音訊 .m4a (iOS 鎖屏播放用,見 ktv-pipeline/pwa_audio.py)
+  // 與 mp4 一起搬到 trash,避免孤兒 m4a 佔空間。
+  // audioOriginal/audioVocalOff URL 形式: /audio/<encoded-name>.m4a 與 /audio/<encoded-name>-vocal-off.m4a
+  function audioBasenameFromUrl(audioUrl, suffix) {
+    if (!audioUrl) return null;
+    // audioUrl 可能是絕對 URL 或 /audio/xxx.m4a
+    try {
+      const u = new URL(audioUrl, 'http://x');
+      return decodeURIComponent(path.basename(u.pathname));
+    } catch (e) {
+      return null;
+    }
+  }
+  const audioOrigBasename = audioBasenameFromUrl(song.audioOriginal);
+  const audioVocBasename = audioBasenameFromUrl(song.audioVocalOff);
+  if (audioOrigBasename) {
+    sources.push({ role: 'audioOriginal', abs: path.join(AUDIO_DIR, audioOrigBasename), fileName: audioOrigBasename, dir: AUDIO_DIR });
+  }
+  if (audioVocBasename) {
+    sources.push({ role: 'audioVocalOff', abs: path.join(AUDIO_DIR, audioVocBasename), fileName: audioVocBasename, dir: AUDIO_DIR });
   }
 
   // 防呆 1: 同名檔案已存在於 trash → 加時間戳避免覆蓋
@@ -663,7 +721,7 @@ app.get('/api/songs/trash', (req, res) => {
       return res.json({ success: true, items: [] });
     }
     const items = fs.readdirSync(TRASH_DIR)
-      .filter((f) => /\.(mp4|webm|mkv)$/i.test(f))
+      .filter((f) => /\.(mp4|webm|mkv|m4a)$/i.test(f))
       .map((f) => {
         const stat = fs.statSync(path.join(TRASH_DIR, f));
         return {
@@ -680,8 +738,8 @@ app.get('/api/songs/trash', (req, res) => {
 });
 
 /**
- * 把垃圾桶的檔案復原回 VIDEO_DIR。
- * 復原後會重建 SONG_LIBRARY,會自然納入這首。
+ * 把垃圾桶的檔案復原。
+ * 檔名副檔名決定歸位: .m4a → AUDIO_DIR;其他 (mp4/webm/mkv) → VIDEO_DIR
  */
 app.post('/api/songs/restore', (req, res) => {
   const fileName = req.body?.fileName;
@@ -692,8 +750,10 @@ app.post('/api/songs/restore', (req, res) => {
   if (!fileName || !/^[\w.\-\s()（）\[\]【】「」]+$/.test(fileName)) {
     return res.status(400).json({ success: false, error: '檔名不合法' });
   }
+  // 根據副檔名決定目標 dir: .m4a → AUDIO_DIR, 其他 → VIDEO_DIR
+  const targetDir = /\.m4a$/i.test(fileName) ? AUDIO_DIR : VIDEO_DIR;
   const src = path.join(TRASH_DIR, fileName);
-  const dst = path.join(VIDEO_DIR, fileName);
+  const dst = path.join(targetDir, fileName);
   if (!fs.existsSync(src)) {
     return res.status(404).json({ success: false, error: '垃圾桶找不到這個檔' });
   }
@@ -701,6 +761,10 @@ app.post('/api/songs/restore', (req, res) => {
     return res.status(409).json({ success: false, error: '目標位置已有同名檔,無法復原' });
   }
   try {
+    // 確保目標 dir 存在 (.m4a 在 AUDIO_DIR 可能尚未建)
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
     fs.renameSync(src, dst);
     log('info', '從垃圾桶復原', { fileName, to: dst });
     // fs.watch 會自動偵測,rebuildLibrary 也會在輪詢時跑 (保險起見手動呼叫)

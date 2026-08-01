@@ -240,6 +240,8 @@
 
   <!-- 滿版播放器 -->
   <video id="player" playsinline preload="auto"></video>
+  <!-- 背景播放專用 audio element (音樂模式) — iOS PWA 鎖屏繼續播 -->
+  <audio id="bgAudio" preload="auto" playsinline></audio>
 
   <!-- 換歌黑幕過場 -->
   <div id="transitionOverlay" class="fixed inset-0 bg-black z-40 opacity-0 pointer-events-none transition-opacity duration-300"></div>

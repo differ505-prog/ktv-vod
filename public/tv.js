@@ -11,6 +11,7 @@
 
   // ===== 元素 =====
   const video = document.getElementById('player');
+  const bgAudio = document.getElementById('bgAudio'); // 音樂模式背景播放
   const nowPlayingTitle = document.getElementById('nowPlayingTitle');
   const nowPlayingArtist = document.getElementById('nowPlayingArtist');
   const audioModeLabel = document.getElementById('audioModeLabel');
@@ -163,9 +164,27 @@ function initAudioGraph() {
       accGain.gain.value = 1.0;
       vocGain.gain.value = 0.0;
     }
+    currentAudioMode = mode; // 記住目前伺服器廣播的 mode (給 audio-mode replay 用)
+    // Audio-mode 下,如果 mode 變更,重新挑對應的 .m4a 餵給 bgAudio
+    if (audioMode && currentSongRef && (mode === 'original' || mode === 'vocal_off')) {
+      const newTrack = mode === 'vocal_off' ? 'vocal_off' : 'original';
+      if (newTrack !== audioCurrentTrack) {
+        const savedTime = bgAudio.currentTime;
+        audioCurrentTrack = newTrack;
+        const src = getAudioModeSrc(currentSongRef, newTrack);
+        if (src) {
+          bgAudio.src = src;
+          bgAudio.currentTime = savedTime;
+          bgAudio.play().catch(() => {});
+          updateMediaSession(currentSongRef);
+        }
+      }
+    }
     audioModeLabel.textContent = mode === 'original' ? '原唱' : '伴奏';
     console.log('[音訊] mode =', mode, '(accGain=' + (accGain ? accGain.gain.value : '?') + ', vocGain=' + (vocGain ? vocGain.gain.value : '?') + ')');
   }
+
+  let currentAudioMode = 'original'; // 從 server 廣播過來的最新 audio mode (original/vocal_off)
 
   // ===== Socket.io 連線 =====
   const socket = io({ reconnection: true });
@@ -185,7 +204,10 @@ function initAudioGraph() {
     if (state.tvSyncOffset !== undefined) {
       currentTvSyncOffset = state.tvSyncOffset;
     }
-    if (state.audioMode) applyAudioMode(state.audioMode);
+    if (state.audioMode) {
+      applyAudioMode(state.audioMode);
+      currentAudioMode = state.audioMode;
+    }
     if (state.currentSong) {
       playSong(state.currentSong);
     }
@@ -203,6 +225,8 @@ function initAudioGraph() {
     try { video.pause(); } catch (e) {}
     video.removeAttribute('src');
     video.load();
+    // audio-mode 也要停 bgAudio
+    stopBgAudio();
     currentSongRef = null;
     // 重置 ended guard，避免 stop 後殘留的 error 延遲 callback 觸發
     _songEndedEmitted = false;
@@ -282,11 +306,22 @@ function initAudioGraph() {
 
     // 記住當前 song（含 srcVocalOff），給 change_audio_mode 切換音軌用
     currentSongRef = song;
+    // Audio-mode 同步清 bgAudio 上一次狀態,避免殘留
+    audioCurrentTrack = audioMode ? (currentAudioMode === 'vocal_off' ? 'vocal_off' : 'original') : 'original';
 
     // 重置 ended/error guard，避免上一首歌的延迟回调干扰新歌
     _songEndedEmitted = false;
 
-    console.log('[playSong] 收到 song =', song.src, 'audioUnlocked =', audioUnlocked);
+    console.log('[playSong] 收到 song =', song.src, 'audioMode=', audioMode, 'audioUnlocked =', audioUnlocked);
+
+    // ===== Audio Mode (背景播放) 路徑 =====
+    // 音樂模式時完全不走 <video> (iOS 背景會被 pa是use)，
+    // 改用 <audio> 播 server 預抽的 .m4a,鎖屏才不會被 pause。
+    // 注意:不需要 user gesture 解鎖 audioContext,因為 <audio> 用瀏覽器原生解碼。
+    if (audioMode) {
+      playBgAudio(song);
+      return;
+    }
 
     // ===== 關鍵：在 audioContext 解鎖之前，不要碰 video.src =====
     // 原因：MediaElementSource 一旦建立 (initAudioGraph),video 元素的
@@ -445,6 +480,21 @@ function setAudioMode(on) {
     audioModeBtnLabel.textContent = audioMode ? 'TV 模式' : '音樂模式';
   }
   console.log('[音樂模式] 切換為', audioMode ? 'ON' : 'OFF');
+
+  // 切到音樂模式:把現在播的歌交給 bgAudio (iOS 才能背景播)
+  // 切回 TV 模式:停 bgAudio,讓 <video> 接手
+  if (on && currentSongRef) {
+    // 等一首具備 .m4a 的歌才切
+    audioCurrentTrack = currentAudioMode === 'vocal_off' ? 'vocal_off' : 'original';
+    playBgAudio(currentSongRef);
+    try { video.pause(); } catch (e) {}
+  } else if (!on) {
+    stopBgAudio();
+    // video 從 currentSongRef 接手 (若 audioUnlocked 已建立 graph)
+    if (currentSongRef && audioUnlocked) {
+      playSong(currentSongRef);
+    }
+  }
 }
 
 // 從 URL query 自動進入音樂模式 (?mode=audio)
@@ -457,6 +507,73 @@ if (new URLSearchParams(window.location.search).get('mode') === 'audio') {
 audioModeBtn.addEventListener('click', () => {
   setAudioMode(!audioMode);
 });
+
+// ===== Audio Mode (背景播放) =====
+// iOS PWA 鎖屏仍會 pause <video>,所以 audio-mode 時改用 <audio> element 播 server 預先抽好的 .m4a,
+// .m4a 才能拿到 iOS 的背景音訊 session,並透過 MediaSession API 顯示鎖屏卡片。
+//
+// 設計:
+//   - audio-mode 時: bgAudio 處理一切 (load/play),video 完全不動作 (display:none 也沒用,iOS 仍會清緩衝)
+//   - TV mode 時: 維持原本的 <video> + Web Audio graph 流程
+//   - 切回 TV mode 時: 同步把 bgAudio 暫停,讓 video 接手
+//   - audioMode 切換 (原唱/伴奏) 時: 重新給 bgAudio 餵對應的 .m4a URL
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => bgAudio.play().catch(() => {}));
+  navigator.mediaSession.setActionHandler('pause', () => bgAudio.pause().catch(() => {}));
+  navigator.mediaSession.setActionHandler('seekbackward', () => { bgAudio.currentTime = Math.max(0, bgAudio.currentTime - 10); });
+  navigator.mediaSession.setActionHandler('seekforward', () => { bgAudio.currentTime = Math.min(bgAudio.duration || 0, bgAudio.currentTime + 10); });
+}
+
+bgAudio.addEventListener('ended', () => {
+  // 通知後端切下一首 (只在 audio-mode 才有作用)
+  if (audioMode) {
+    socket.emit('song_ended');
+  }
+});
+
+function updateMediaSession(song) {
+  if (!('mediaSession' in navigator) || !song) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.title || '—',
+      artist: song.artist || '',
+      album: 'CouchMic · ' + (audioMode && audioCurrentTrack === 'vocal_off' ? '伴奏' : '原唱'),
+    });
+  } catch (e) {
+    console.warn('[bgAudio] MediaSession metadata 失敗:', e);
+  }
+}
+
+// audio-mode 專用:挑對應的 .m4a URL
+// - track='vocal_off' → src = audioVocalOff (伴奏 mono)
+// - track='original'  → src = audioOriginal (原唱 L+R mixed mono)
+function getAudioModeSrc(song, track) {
+  if (!song) return null;
+  if (track === 'vocal_off') return song.audioVocalOff || song.audioOriginal || null;
+  return song.audioOriginal || null;
+}
+
+let audioCurrentTrack = 'original'; // 記住 audio-mode 目前播原唱還是伴奏
+
+function playBgAudio(song) {
+  if (!song) return;
+  const src = getAudioModeSrc(song, audioCurrentTrack);
+  if (!src) {
+    console.warn('[bgAudio] 此歌沒有預抽的 .m4a (audioOriginal/audioVocalOff),跳過背景播放');
+    return;
+  }
+  bgAudio.src = src;
+  bgAudio.loop = false;
+  bgAudio.play().catch((err) => console.warn('[bgAudio] play 失敗：', err));
+  updateMediaSession(song);
+}
+
+function stopBgAudio() {
+  try { bgAudio.pause(); } catch (e) {}
+  bgAudio.removeAttribute('src');
+  bgAudio.load();
+}
 
 
 // ===== 第一次 user gesture 解鎖 (autoplay + AudioContext 政策) =====
