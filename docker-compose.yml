@@ -58,7 +58,8 @@ services:
   telegram-bot:
     image: node:20-bookworm-slim
     container_name: ktv-telegram-bot
-    restart: unless-stopped
+    # on-failure:5 → token 缺失時 bot exit 0,不重啟;token 有效但連線失敗才重啟 5 次
+    restart: on-failure:5
     command: ["node", "/app/telegram_bot.js"]
     working_dir: /app
     environment:
@@ -68,7 +69,7 @@ services:
       - BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
     volumes:
-      - ./ktv-pipeline/telegram_bot.js:/app/telegram_bot.js:ro
+      - ./telegram_bot.js:/app/telegram_bot.js:ro
     networks:
       - ktv-net
     depends_on:

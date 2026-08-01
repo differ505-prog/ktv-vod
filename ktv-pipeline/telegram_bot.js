@@ -12,9 +12,14 @@
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  console.error('[FATAL] BOT_TOKEN 環境變數未設定');
-  console.error('  Telegram → @BotFather → /newbot → 取得 token');
-  process.exit(1);
+  console.error('[skip] BOT_TOKEN 環境變數未設定 → Bot 不啟動');
+  console.error('  設定方式:');
+  console.error('    1. Telegram 找 @BotFather → /newbot → 取得 token');
+  console.error('    2. NAS 上 echo "TELEGRAM_BOT_TOKEN=xxx" >> /home/vibe/ktv-vod/.env');
+  console.error('    3. cd /home/vibe/ktv-vod && docker compose up -d telegram-bot');
+  // 退出 0:docker 視為「正常停機」,不會瘋狂重啟 spam logs
+  // 用 docker compose start / up -d 在 user 填好 token 後即可重啟
+  process.exit(0);
 }
 
 const KTV_API = process.env.KTV_API || 'http://localhost:3000';
