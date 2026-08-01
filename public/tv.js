@@ -66,20 +66,25 @@
   const mobileUrl = `${serverUrl}/mobile.html`;
   qrUrlDiv.textContent = mobileUrl;
 
-  // 等 DOM ready 再生成 QR (qrcode.js 需要有尺寸的容器)
-  if (typeof QRCode !== 'undefined') {
-    qrcodeDiv.innerHTML = '';
-    new QRCode(qrcodeDiv, {
+  // 共用:把 QR Code 渲染到指定容器 (沉浸模式 modal 跟主 panel 共用同一份 URL)
+  function renderQrInto(container, size = 140) {
+    if (typeof QRCode === 'undefined') {
+      container.textContent = 'QRCode 載入失敗';
+      return;
+    }
+    container.innerHTML = '';
+    new QRCode(container, {
       text: mobileUrl,
-      width: 140,
-      height: 140,
+      width: size,
+      height: size,
       colorDark: '#000000',
       colorLight: '#ffffff',
       correctLevel: QRCode.CorrectLevel.M,
     });
-  } else {
-    qrcodeDiv.textContent = 'QRCode 載入失敗';
   }
+
+  // 等 DOM ready 再生成 QR (qrcode.js 需要有尺寸的容器)
+  renderQrInto(qrcodeDiv, 140);
 
   // ===== Web Audio API (伴奏消除核心) =====
   // 架構：video → MediaElementSource → Splitter (L=伴奏, R=人聲) → 2 個 Gain → destination
@@ -568,13 +573,30 @@ function setAudioMode(on) {
 // 從 URL query 自動進入音樂模式 (?mode=audio)
 // 讓 user 可以直接分享「音樂模式 URL」給朋友 / 設成 PWA 入口
 if (new URLSearchParams(window.location.search).get('mode') === 'audio') {
-  // 等 DOM ready 後再切換 (確保 CSS class 生效)
   setTimeout(() => setAudioMode(true), 0);
 }
 
 audioModeBtn.addEventListener('click', () => {
   setAudioMode(!audioMode);
 });
+
+// ===== 沉浸模式 QR (常駐顯示,可隨時掃碼) =====
+// 沉浸模式時,右下角自動顯示 QR Code — 點歌網址必須隨時可見
+const immersiveQrCode = document.getElementById('immersiveQrCode');
+
+// 監聽 body.immersive 變動,首次進入時渲染 QR (避免重複)
+const immersiveObserver = new MutationObserver(() => {
+  if (document.body.classList.contains('immersive') && immersiveQrCode && !immersiveQrCode.dataset.rendered) {
+    renderQrInto(immersiveQrCode, 120);  // 小一點,沉浸模式不要干擾畫面
+    immersiveQrCode.dataset.rendered = '1';
+  }
+});
+immersiveObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// 初始也跑一次(若 user 用 ?immersive=1 直接進入)
+if (document.body.classList.contains('immersive') && immersiveQrCode && !immersiveQrCode.dataset.rendered) {
+  renderQrInto(immersiveQrCode, 120);
+  immersiveQrCode.dataset.rendered = '1';
+}
 
 // ===== Audio Mode (背景播放) =====
 // iOS PWA 鎖屏仍會 pause <video>,所以 audio-mode 時改用 <audio> element 播 server 預先抽好的 .m4a,

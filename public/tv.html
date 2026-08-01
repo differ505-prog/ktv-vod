@@ -184,7 +184,12 @@
       opacity: 0;
       pointer-events: none;
     }
-
+    /* 沉浸模式時隱藏「音樂模式」按鈕 (沉浸 = 全螢幕觀影,音樂模式無意義) */
+    body.immersive #audioModeBtn {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
     /* ===== 音樂模式 (Audio-Only Mode) =====
        隱藏 video 元素 (但繼續播 audio),改成黑底大字歌名畫面。
        適用於：手機 PWA 背景播放、純粹聽歌場景。 */
@@ -233,6 +238,44 @@
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }
+
+    /* 沉浸模式 QR 直接顯示(不藏 modal) — 點歌網址必須隨時可見 */
+    #immersiveQrModal {
+      position: fixed;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      z-index: 50;
+      display: none;
+      background: rgba(20, 20, 28, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 1.25rem;
+      padding: 1.25rem 1.5rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+      animation: qrMiniIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #immersiveQrModal.show { display: block; }
+    @keyframes qrMiniIn {
+      from { opacity: 0; transform: scale(0.9) translateY(10px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    #immersiveQrModal h3 {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+    #immersiveQrModal h3 i { color: #f9a8d4; margin-right: 0.3rem; }
+    #immersiveQrModal .qr-stage {
+      background: white;
+      padding: 0.4rem;
+      border-radius: 0.5rem;
+      display: inline-block;
+    }
+    body.immersive #immersiveQrModal { display: block; }
   </style>
 </head>
 <body class="bg-black">
@@ -274,6 +317,14 @@
     </div>
     <div id="qrcode" class="bg-white p-2 rounded-xl shadow-lg"></div>
     <div id="qrUrl" class="text-[10px] text-gray-400 mt-2 text-center font-mono break-all"></div>
+  </div>
+
+  <!-- 沉浸模式 QR (右下隨時可掃) -->
+  <div id="immersiveQrModal" role="dialog" aria-label="點歌 QR Code">
+    <h3><i class="fa-solid fa-mobile-screen"></i>掃碼加入點歌</h3>
+    <div class="qr-stage">
+      <div id="immersiveQrCode"></div>
+    </div>
   </div>
 
   <!-- 沉浸模式時,底部中央保留「目前播放」bar -->
