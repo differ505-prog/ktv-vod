@@ -263,10 +263,18 @@
         <div id="jobsList" class="space-y-2"></div>
       </div>
 
-      <div class="relative mb-3">
-        <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
-        <input id="searchInput" type="text" placeholder="搜尋歌名 / 歌手..."
-               class="w-full glass rounded-xl pl-9 pr-3 py-3 text-sm outline-none focus:border-pink-500/50" />
+      <div class="flex gap-2 mb-3">
+        <div class="relative flex-1">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+          <input id="searchInput" type="text" placeholder="搜尋歌名 / 歌手..."
+                 class="w-full glass rounded-xl pl-9 pr-3 py-3 text-sm outline-none focus:border-pink-500/50" />
+        </div>
+        <button id="libraryModeToggle"
+                class="glass rounded-xl px-3 py-2 text-xs font-bold text-gray-300 hover:text-pink-400 transition flex items-center gap-1.5 flex-shrink-0"
+                title="切換歌手分組">
+          <i class="fa-solid fa-user-group"></i>
+          <span id="libraryModeLabel">分組</span>
+        </button>
       </div>
       <div id="songList" class="space-y-2 pb-6"></div>
     </section>

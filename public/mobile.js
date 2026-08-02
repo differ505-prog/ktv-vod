@@ -1117,6 +1117,9 @@ function matchSong(song, q) {
   });
 }
 
+// 歌曲庫顯示模式: 'list' = 平面列表, 'group' = 歌手分組
+let libraryMode = localStorage.getItem('libraryMode') || 'list';
+
 function renderSongs() {
   const q = (searchInput.value || '').trim().toLowerCase();
   songList.innerHTML = '';
@@ -1125,30 +1128,87 @@ function renderSongs() {
     songList.innerHTML = '<div class="text-center text-gray-500 py-8 text-sm">找不到符合的歌曲</div>';
     return;
   }
-  filtered.forEach((song) => {
-    const li = renderSongCard(song, { action: 'pick' });
-    li.addEventListener('click', (e) => {
-      // 點到刪除按鈕不觸發點歌
-      if (e.target.closest('.delete-song-btn')) return;
-      pickSong(song.id);
-    });
-    // 刪除按鈕事件代理
-    const deleteBtn = li.querySelector('.delete-song-btn');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!hostModeUnlocked) {
-          showToast('🔒 需主揪模式解鎖才能刪除', 'info');
-          return;
-        }
-        openDeleteConfirmModal(song);
-      });
-    }
-    attachLibraryCardLongPress(li, song);
-    songList.appendChild(li);
-  });
+  if (libraryMode === 'group') {
+    renderSongsByArtist(filtered);
+  } else {
+    renderSongsFlat(filtered);
+  }
   // 同步刪除按鈕顯示狀態
   renderHostUI();
+}
+
+function renderSongsFlat(filtered) {
+  filtered.forEach((song) => {
+    const li = renderSongCard(song, { action: 'pick' });
+    attachSongCardHandlers(li, song);
+    songList.appendChild(li);
+  });
+}
+
+function renderSongsByArtist(filtered) {
+  // 依 artist 分組，排序：歌手名稱 (zh locale)，組內依 title
+  const groups = new Map();
+  filtered.forEach((song) => {
+    const key = song.artist || '未知歌手';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(song);
+  });
+  const sortedArtists = [...groups.keys()].sort((a, b) =>
+    a.localeCompare(b, 'zh-Hant-TW')
+  );
+  sortedArtists.forEach((artist) => {
+    const songs = groups.get(artist).sort((a, b) =>
+      (a.title || '').localeCompare(b.title || '', 'zh-Hant-TW')
+    );
+    // 歌手 header (預設展開)
+    const header = document.createElement('div');
+    header.className = 'flex items-center justify-between px-3 py-2 mt-2 rounded-xl bg-white/5 cursor-pointer select-none';
+    header.innerHTML = `
+      <div class="flex items-center gap-2 text-sm font-bold text-pink-300">
+        <i class="fa-solid fa-user-group text-xs"></i>
+        <span>${escapeHtml(artist)}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] text-gray-400">${songs.length} 首</span>
+        <i class="fa-solid fa-chevron-down text-[10px] text-gray-400 transition-transform"></i>
+      </div>
+    `;
+    const groupContainer = document.createElement('div');
+    groupContainer.className = 'space-y-2 pl-2';
+    songs.forEach((song) => {
+      const li = renderSongCard(song, { action: 'pick' });
+      attachSongCardHandlers(li, song);
+      groupContainer.appendChild(li);
+    });
+    header.addEventListener('click', () => {
+      const chevron = header.querySelector('.fa-chevron-down');
+      const hidden = groupContainer.classList.toggle('hidden');
+      chevron.style.transform = hidden ? 'rotate(-90deg)' : 'rotate(0)';
+    });
+    songList.appendChild(header);
+    songList.appendChild(groupContainer);
+  });
+}
+
+function attachSongCardHandlers(li, song) {
+  li.addEventListener('click', (e) => {
+    // 點到刪除按鈕不觸發點歌
+    if (e.target.closest('.delete-song-btn')) return;
+    pickSong(song.id);
+  });
+  // 刪除按鈕事件代理
+  const deleteBtn = li.querySelector('.delete-song-btn');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!hostModeUnlocked) {
+        showToast('🔒 需主揪模式解鎖才能刪除', 'info');
+        return;
+      }
+      openDeleteConfirmModal(song);
+    });
+  }
+  attachLibraryCardLongPress(li, song);
 }
 
 /**
@@ -1233,6 +1293,22 @@ function attachLibraryCardLongPress(li, song) {
   }
 
   searchInput.addEventListener('input', () => renderSongs());
+
+  // 歌曲庫模式切換 (列表 ↔ 歌手分組)
+  const modeToggle = document.getElementById('libraryModeToggle');
+  const modeLabel = document.getElementById('libraryModeLabel');
+  function updateModeLabel() {
+    modeLabel.textContent = libraryMode === 'group' ? '列表' : '分組';
+    modeToggle.querySelector('i').className =
+      libraryMode === 'group' ? 'fa-solid fa-list' : 'fa-solid fa-user-group';
+  }
+  updateModeLabel();
+  modeToggle.addEventListener('click', () => {
+    libraryMode = libraryMode === 'group' ? 'list' : 'group';
+    localStorage.setItem('libraryMode', libraryMode);
+    updateModeLabel();
+    renderSongs();
+  });
 
   // ===== 加歌 Modal =====
   function openAddSongModal() {
