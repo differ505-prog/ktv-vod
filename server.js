@@ -41,6 +41,74 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
 const AUDIO_DIR = process.env.AUDIO_DIR || path.join(path.dirname(VIDEO_DIR), 'audio');
 const AUDIO_URL_PREFIX = '/audio';
 
+// ===== 歌曲編輯持久化 =====
+// 為什麼要持久化:  SONG_LIBRARY 純在記憶體,brain 重啟就清空。
+//   rebuildLibrary 內的 restoredEdits 只能在「同一次重啟內」防覆寫,
+//   跨重啟仍會回到 parseSongTitle 自動解析值。
+// 持久化方案:  本地歌的 title/artist 編輯寫到 /ktv-data/song-edits.json,
+//   以 src 為 key; 啟動時 + 每次 rebuild 後套用回 SONG_LIBRARY。
+// 為什麼用 src 不用 id:  src 是磁碟檔名路徑,跨重啟穩定; id 會重編。
+const SONG_EDITS_FILE = process.env.SONG_EDITS_FILE || path.join(path.dirname(VIDEO_DIR), 'song-edits.json');
+
+// 預設編輯 seed：用來在「沒有持久檔」時替已命名的歌提供預設 title/artist
+// 對應檔名 src (raw, 與 SONG_LIBRARY 上的 s.src 一致) → { title, artist }
+// 用途: 跨重啟後人工 / 自動判斷錯誤的檔名可在這裡補一個預設
+// (使用者若要在 UI 改,可覆蓋此處)
+const SONG_EDITS_SEED = {
+  '/videos/#周深_封神之曲《达拉崩吧》_ktv.mp4': { title: '达拉崩吧', artist: '周深' },
+};
+
+function readSongEdits() {
+  try {
+    let map = new Map();
+    if (fs.existsSync(SONG_EDITS_FILE)) {
+      const raw = fs.readFileSync(SONG_EDITS_FILE, 'utf8');
+      const obj = JSON.parse(raw);
+      map = new Map(Object.entries(obj || {}));
+    }
+    // 套用 seed (僅在「檔內沒有」時)
+    for (const [src, val] of Object.entries(SONG_EDITS_SEED)) {
+      if (!map.has(src)) map.set(src, val);
+    }
+    return map;
+  } catch (e) {
+    log('warn', '讀取 song-edits 失敗', { err: e.message, file: SONG_EDITS_FILE });
+    return new Map(Object.entries(SONG_EDITS_SEED));
+  }
+}
+
+function writeSongEdits(map) {
+  try {
+    const obj = Object.fromEntries(map);
+    // atomic write: 寫到 .tmp 再 rename, 避免中途 crash 造成空檔
+    const tmp = SONG_EDITS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+    fs.renameSync(tmp, SONG_EDITS_FILE);
+  } catch (e) {
+    log('warn', '寫入 song-edits 失敗', { err: e.message, file: SONG_EDITS_FILE });
+  }
+}
+
+/** 套用持久 edits 到 SONG_LIBRARY 內所有 local 歌 (用 src 對應) */
+function applyPersistedEdits() {
+  const edits = readSongEdits();
+  if (edits.size === 0) return 0;
+  let n = 0;
+  for (const s of SONG_LIBRARY) {
+    if (s.source === 'local' && s.src) {
+      const e = edits.get(s.src);
+      if (e && e.title && e.artist) {
+        if (s.title !== e.title || s.artist !== e.artist) {
+          s.title = e.title;
+          s.artist = e.artist;
+          n += 1;
+        }
+      }
+    }
+  }
+  return n;
+}
+
 // ===== 三層防護 = Hard Delete 防呆 (Soft Delete + 密碼 + 不分檔不分伇列) =====
 // TRASH_DIR: 軟刪除把檔案移到這裡,而不是 fs.unlink — 误刪能救回。
 //   - 不直接暴露為 URL prefix (安全考量)
@@ -422,7 +490,8 @@ function buildSongLibrary() {
 }
 
 let SONG_LIBRARY = buildSongLibrary();
-log('info', '歌曲庫已載入', { count: SONG_LIBRARY.length });
+const _initialAppliedEdits = applyPersistedEdits();
+log('info', '歌曲庫已載入', { count: SONG_LIBRARY.length, appliedEdits: _initialAppliedEdits });
 
 /**
  * 重新掃描 VIDEO_DIR 並比對差異。
@@ -465,8 +534,9 @@ function rebuildLibrary() {
     return { changed: false, added: 0, removed: 0 };
   }
 
-  // 把舊 library 中用戶編輯過 title/artist 的記錄合並回 fresh
+  // 把舊 library 中用戶編輯過 title/artist 的記錄合併回 fresh
   // (rebuildLibrary 只是重新掃描磁碟,磁碟上的 mp4 檔名不會變,變的只是 title/artist)
+  // 注意: 這裡是「次級保護」,跨重啟的最終保護是 SONG_EDITS_FILE 持久化檔。
   const previousEdits = new Map();
   for (const s of SONG_LIBRARY) {
     if (s.source === 'local' && s.src) {
@@ -485,8 +555,22 @@ function rebuildLibrary() {
     }
   }
 
+  // 二次保險: 套用持久化 edits (覆蓋任何未被合併到的情況)
+  const persistedEdits = readSongEdits();
+  if (persistedEdits.size > 0) {
+    for (const s of fresh) {
+      if (s.source === 'local' && s.src) {
+        const e = persistedEdits.get(s.src);
+        if (e && e.title && e.artist) {
+          s.title = e.title;
+          s.artist = e.artist;
+        }
+      }
+    }
+  }
+
   SONG_LIBRARY = fresh;
-  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged, restoredEdits: previousEdits.size });
+  log('info', '歌曲庫已更新', { added: added.length, removed: removed.length, vocalOffChanged, restoredEdits: previousEdits.size, persistedEdits: persistedEdits.size });
   io.emit('library_updated', { songs: SONG_LIBRARY });
 
   // ===== 新歌自動加入播放清單 =====
@@ -1168,6 +1252,18 @@ io.on('connection', (socket) => {
     if (!changed) {
       log('warn', 'edit_song 找不到目標', { id });
       return;
+    }
+
+    // 持久化 - 從 SONG_LIBRARY 找到 local 歌的 src 寫檔
+    const edited = SONG_LIBRARY.find((s) => s.id === id);
+    if (edited && edited.source === 'local' && edited.src) {
+      const edits = readSongEdits();
+      edits.set(edited.src, {
+        title: edited.title,
+        artist: edited.artist,
+        updatedAt: new Date().toISOString(),
+      });
+      writeSongEdits(edits);
     }
 
     log('info', '改名/改歌手', { id, title: cleanTitle, artist: cleanArtist });
