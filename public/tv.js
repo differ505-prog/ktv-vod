@@ -294,6 +294,7 @@ function initAudioGraph() {
     currentSongRef = null;
     // 重置 ended guard，避免 stop 後殘留的 error 延遲 callback 觸發
     _songEndedEmitted = false;
+    _videoFallbackTried = false;
     // 清除倒數
     clearInterval(countdownInterval);
     clearTimeout(hideCountdownTimer);
@@ -375,6 +376,7 @@ function initAudioGraph() {
 
     // 重置 ended/error guard，避免上一首歌的延迟回调干扰新歌
     _songEndedEmitted = false;
+    _videoFallbackTried = false;
 
     console.log('[playSong] 收到 song =', song.src, 'audioMode=', audioMode, 'audioUnlocked =', audioUnlocked);
 
@@ -530,14 +532,45 @@ function initAudioGraph() {
   video.addEventListener('ended', _emitSongEnded);
 
   video.addEventListener('error', (e) => {
-    console.error('[video] error', e);
-    // 来源错误时也通知后端，避免卡死；1.5s delay 给缓冲恢复最后机会
+    console.error('[video] error', e, 'src=', video.currentSrc, 'codec可能不支援');
+    // Fallback: AV1 mp4 在 iOS Safari 會直接 error → 試改用 m4a 音訊播 (audio-mode)。
+    // 條件: 還沒 fallback 過、且 currentSong 有 audioOriginal/audioVocalOff、且沒發過 ended
+    if (!_videoFallbackTried && currentSongRef && !_songEndedEmitted) {
+      const fallbackSrc = currentSongRef.audioOriginal || currentSongRef.audioVocalOff;
+      if (fallbackSrc) {
+        _videoFallbackTried = true;
+        console.warn('[video] mp4 codec 不支援, fallback 到 m4a 音訊播完這首');
+        // 切到音樂模式,讓 bgAudio 用 m4a 接手這首
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
+        if (!audioMode) setAudioMode(true);
+        if (currentSongRef) playBgAudio(currentSongRef);
+        // 顯示一次性提示給 user
+        showVideoFallbackToast(currentSongRef);
+        return; // 不走 1.5s 強制 ended
+      }
+    }
+    // 1.5s 延遲防呆：給緩衝最後一次恢復機會,沒成功就 forced ended
     setTimeout(() => {
       if (!_songEndedEmitted) {
         _emitSongEnded();
       }
     }, 1500);
   });
+
+  let _videoFallbackTried = false;
+  function showVideoFallbackToast(song) {
+    let toast = document.getElementById('videoFallbackToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'videoFallbackToast';
+      toast.className = 'fixed top-20 left-1/2 -translate-x-1/2 z-50 panel rounded-xl px-4 py-2 text-sm text-yellow-200';
+      toast.style.pointerEvents = 'none';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = `影片 codec 不支援,改用音訊播放: ${song.title || song.id}`;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 4000);
+  }
 
 // ===== 音樂模式 (Audio-Only Mode) =====
 // 用途: 純聽歌場景 (背景播放、駕車聽歌)。
@@ -587,14 +620,14 @@ const immersiveQrCode = document.getElementById('immersiveQrModal');
 // 監聽 body.immersive 變動,首次進入時渲染 QR (避免重複)
 const immersiveObserver = new MutationObserver(() => {
   if (document.body.classList.contains('immersive') && immersiveQrCode && !immersiveQrCode.dataset.rendered) {
-    renderQrInto(immersiveQrCode, 72);  // 頂部小卡,只要能掃,不擋畫面
+    renderQrInto(immersiveQrCode, 48);  // 更小的頂部小卡,不干擾觀影,hover可放大
     immersiveQrCode.dataset.rendered = '1';
   }
 });
 immersiveObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 // 初始也跑一次(若 user 用 ?immersive=1 直接進入)
 if (document.body.classList.contains('immersive') && immersiveQrCode && !immersiveQrCode.dataset.rendered) {
-  renderQrInto(immersiveQrCode, 120);
+  renderQrInto(immersiveQrCode, 48);
   immersiveQrCode.dataset.rendered = '1';
 }
 
@@ -1027,6 +1060,29 @@ async function unlockAudioPlayback() {
     }
     updateImmersiveBtnUI();
   });
+
+  // 右上角「退出」常駐按鈕:同時退出 immersive + audio-mode (任一模式下皆可見)
+  const exitImmersiveBtn = document.getElementById('exitImmersiveBtn');
+  if (exitImmersiveBtn) {
+    exitImmersiveBtn.addEventListener('click', () => {
+      let anyExit = false;
+      if (typeof immersive !== 'undefined' && immersive) {
+        exitImmersive();
+        updateImmersiveBtnUI();
+        anyExit = true;
+      }
+      if (typeof audioMode !== 'undefined' && audioMode) {
+        setAudioMode(false);
+        anyExit = true;
+      }
+      // 同步退出瀏覽器原生 fullscreen (若還在)
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      }
+      console.log('[exitImmersiveBtn] 點擊 (已退:', anyExit, ')');
+    });
+  }
 
   // dialog 確認 → 進入全螢幕 (有 user gesture,瀏覽器才會接受)
   immersiveDialogConfirm.addEventListener('click', () => {

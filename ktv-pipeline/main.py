@@ -260,16 +260,45 @@ def stage_download(
     # ---- Step 2: 從同一檔案抽出純視訊（無音軌）----
     # 後續 stage_mix_and_encode 會用這個 video-only mp4
     logger.info("[下載] 從合一 MP4 抽出純視訊 ...")
-    cmd_video = [
-        "ffmpeg", "-y",
-        "-i", str(full_path),
-        "-map", "0:v:0",
-        "-c:v", "copy",
-        "-an",  # 不要音軌
-        "-movflags", "+faststart",
-        str(video_path),
-    ]
-    result = subprocess.run(cmd_video, capture_output=True, text=True, timeout=300)
+
+    # ===== Codec 偵測: 若原始 codec 是 AV1 (iOS Safari/Android 舊版不支援) → 自動轉成 H.264 =====
+    # 目的: 最終產出 mp4 在所有瀏覽器都能播,免去 tv 端 video.error → 立刻切歌的問題。
+    # 只有當 codec 是 av1 / av01 / vp9 / hevc 才轉;h264 直接 copy (省時間)。
+    probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1",
+                 str(full_path)]
+    try:
+        codec_name = (subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30).stdout or "").strip()
+    except Exception as e:
+        logger.warning(f"[codec 偵測失敗, 預設 copy] {e}")
+        codec_name = ""
+    NEEDS_TRANSCODE = codec_name.lower() in ("av1", "av01", "vp9", "hevc", "h265")
+    if NEEDS_TRANSCODE:
+        logger.info(f"[codec] 偵測到 {codec_name}, 自動 transcoding 到 libx264 (H.264) 以確保瀏覽器相容性")
+        cmd_video = [
+            "ffmpeg", "-y",
+            "-i", str(full_path),
+            "-map", "0:v:0",
+            "-c:v", "libx264",
+            "-preset", "fast",     # 平衡速度/品質, KTV 場景不需要 highest
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",  # iOS 嚴格要求
+            "-movflags", "+faststart",
+            "-an",
+            str(video_path),
+        ]
+    else:
+        logger.info(f"[codec] 偵測到 {codec_name or 'unknown'}, 用 -c:v copy (不重新編碼)")
+        cmd_video = [
+            "ffmpeg", "-y",
+            "-i", str(full_path),
+            "-map", "0:v:0",
+            "-c:v", "copy",
+            "-an",  # 不要音軌
+            "-movflags", "+faststart",
+            str(video_path),
+        ]
+    result = subprocess.run(cmd_video, capture_output=True, text=True, timeout=600)  # transcoding 給多一點時間
     if result.returncode != 0:
         raise RuntimeError(
             f"[ERROR] 抽出視訊失敗 rc={result.returncode}\n{(result.stderr or '')[-500:]}"

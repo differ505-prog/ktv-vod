@@ -177,9 +177,25 @@
       transform: translateY(10px);
     }
     body.immersive #systemTitle {
-      opacity: 0.25;
-      transform: scale(0.6);
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      opacity: 0.35;
+      transform: scale(0.9);
+      transform-origin: left center;
       pointer-events: none;
+      padding-left: 0;
+    }
+    body.immersive #systemStatusDot,
+    body.immersive #systemIcon,
+    body.immersive #systemSubtitle {
+      opacity: 0;
+      width: 0;
+      margin: 0;
+      overflow: hidden;
+      display: none;
     }
     /* 沉浸模式下也淡出待機畫面,讓純粹沉浸觀影 */
     body.immersive #standbyScreen {
@@ -224,6 +240,19 @@
       /* toast 在音樂模式仍要保留通知用 */
       display: block !important;
     }
+    /* 音樂模式下:右上角「退出」按鈕常駐可見,避免 audio-mode/immersive 卡住 user */
+    body.audio-mode #exitImmersiveBtn,
+    body.immersive #exitImmersiveBtn {
+      display: flex !important;
+      pointer-events: auto !important;
+    }
+    /* 非沉浸/非音樂模式時:右上角按鈕縮小,只在 hover 時突出 (降低視覺干擾) */
+    body:not(.immersive):not(.audio-mode) #exitImmersiveBtn {
+      opacity: 0.35;
+    }
+    body:not(.immersive):not(.audio-mode) #exitImmersiveBtn:hover {
+      opacity: 1;
+    }
 
     /* 「已點播：xxx」toast (頂部中央) — 默認隐藏, 加上 .show 才顯示 */
     #songAddedToast {
@@ -244,19 +273,26 @@
     /* 沉浸模式 QR — 與 systemTitle 並排左上角,小尺寸,最少干擾 (沉浸模式前隱藏) */
     #immersiveQrModal {
       display: none;
-      background: rgba(255, 255, 255, 0.78);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      padding: 0.35rem;
+      background: rgba(255, 255, 255, 0.85); /* Slightly more opaque background to make QR readable */
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 0.35rem; /* Nice padding around the QR code */
       border-radius: 0.5rem;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
-      opacity: 0.7;
-      transition: opacity 0.4s ease;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+      opacity: 0.35; /* Much more transparent by default so it's not distracting */
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      cursor: pointer;
     }
-    #immersiveQrModal.qr-stage,
-    #immersiveQrModal .qr-stage { background: transparent; padding: 0; }
+    /* Let the canvas inside have rounded corners */
+    #immersiveQrModal canvas,
+    #immersiveQrModal img {
+      border-radius: 0.25rem;
+    }
     body.immersive #immersiveQrModal { display: block; }
-    body.immersive #immersiveQrModal:hover { opacity: 1; }
+    body.immersive #immersiveQrModal:hover { 
+      opacity: 1; 
+      transform: scale(1.1); /* Slight pop out on hover */
+    }
   </style>
 </head>
 <body class="bg-black">
@@ -283,15 +319,24 @@
     </div>
   </div>
 
-  <!-- 左上角：系統標題 (常駐, 不淡出) ＋ 沉浸模式小 QR 並排其右 -->
+  <!-- 左上角：沉浸模式小 QR ＋ 系統標題 (常駐, 不淡出) -->
   <div id="topLeftBar" class="fixed top-4 left-4 z-10 flex items-center gap-3">
-    <div id="systemTitle" class="panel rounded-xl px-4 py-2 flex items-center gap-3">
-      <div class="pulse-ring w-2.5 h-2.5 rounded-full status-dot"></div>
-      <span class="font-bold tracking-wider text-sm">
-        <i class="fa-solid fa-tv text-pink-400"></i> CouchMic <span class="text-gray-400 font-normal">· 播放端</span>
+    <div id="immersiveQrModal" role="img" aria-label="點歌 QR Code"></div>
+
+    <div id="systemTitle" class="panel rounded-xl px-4 py-2 flex items-center gap-3 transition-all duration-500">
+      <div id="systemStatusDot" class="pulse-ring w-2.5 h-2.5 rounded-full status-dot"></div>
+      <span class="font-bold tracking-wider text-sm transition-all duration-500">
+        <i id="systemIcon" class="fa-solid fa-tv text-pink-400"></i> CouchMic <span id="systemSubtitle" class="text-gray-400 font-normal transition-all duration-500">· 播放端</span>
       </span>
     </div>
-    <div id="immersiveQrModal" role="img" aria-label="點歌 QR Code" class="qr-stage"></div>
+  </div>
+
+  <!-- 右上角:退出沉浸/音樂模式按鈕 (常駐,所有模式皆可見,確保 user 不會卡住) -->
+  <div id="topRightBar" class="fixed top-4 right-4 z-50 flex items-center gap-2">
+    <button id="exitImmersiveBtn" class="panel rounded-xl px-3 py-2 flex items-center gap-2 hover:bg-white/10 transition-all shadow-2xl" title="退出沉浸/音樂模式">
+      <i class="fa-solid fa-up-right-and-down-left-from-line text-pink-400"></i>
+      <span class="text-sm font-medium">退出</span>
+    </button>
   </div>
 
   <!-- 右下角：QR Code (手機遙控) — 可由 mobile 請求叫醒 15 秒 -->
