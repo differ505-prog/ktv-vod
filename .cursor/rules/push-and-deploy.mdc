@@ -53,6 +53,20 @@ SSHPASS='05050505' rsync -avz \
 
 ---
 
+## D. Debug 根因排查守則 (依 CONSTITUTION.md §5.6, 2026-08-02 新增)
+
+**一字記住: 先查字串, 再查網路, 再查資源, 最後才懷疑系統。**
+
+1. **看到 user 報的字串、檔名、URL** → 先掃一輪特殊字元 (`#` `?` `&` 空白 中文 `%` `<>`).
+2. **報「codec / 格式 / 找不到資源」** → 第一步是 `console.log(video.currentSrc)`, 不要先拆 mp4 atom / 跑 ffmpeg.
+3. **後端寫 URL** → 一律 `encodeURIComponent`, 在 helper 內統一強制.
+4. **懷疑 X 問題** → 先用一個最小指令驗證懷疑 (ffprobe / curl / 網址列), 不要直接改 server.
+5. **不要先懷疑自己的系統** — 先驗證 user 提供的字串沒有特殊字元. 報錯訊息是 fallback, 不是根因.
+
+詳見 `CONSTITUTION.md` §5.6, §5.7.
+
+---
+
 ## C. 外網網址評估 (依 §5.4i, 2026-07-27 修憲)
 
 **KTV 外網 Funnel 已經用 Tailscale**: `https://vibe-nas.taila67710.ts.net/tv.html`
@@ -105,3 +119,7 @@ user 已在 AskQuestion 表達意圖並選項 → 直接做。
 視覺確認比 logic review 更快速發現問題。browser snapshot 和截圖同時用：
 - `browser_take_screenshot` — 視覺最終確認
 - `browser_snapshot` — 結構快速確認（refs 可用來點擊）
+
+### b11. Debug 慘案記住 (依 CONSTITUTION.md §5.7 Case #001, 2026-08-02)
+達拉崩吧事件教訓: 檔名含 `#` → server 沒編碼 → 瀏覽器當 fragment → 抓 `/videos/` (資料夾) → 報 codec 不支援。
+agent 卻繞去拆 mp4 atom 5 圈。下次看到「codec / 格式錯」報錯, **第一動就是 console.log `video.currentSrc`**, 不要先懷疑 codec.

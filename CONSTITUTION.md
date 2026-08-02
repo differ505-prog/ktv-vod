@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-07-27（§5.1 修憲:優化/除錯完成「一律」自動 deploy,不再反問；§6 新增:外網 Funnel + §5.4 評估前考慮更優解）
+最後更新：2026-08-02（§5.6 新增 Debug 根因排查守則；§5.7 新增 Bug 案例庫；§5.4k 新增「字串懷疑優先」）
 
 ---
 
@@ -211,3 +211,49 @@ SSHPASS='05050505' rsync -avz \
   --checksum --exclude='.DS_Store' \
   public/ vibe@192.168.31.47:/home/vibe/ktv-vod/public/
 ```
+
+### 5.6 Debug 根因排查守則（2026-08-02 新增）
+
+> 來源: 達拉崩吧「codec 不支援」誤診事件。user 用一字破案（檔名 `#` 變 URL fragment），agent 卻繞了 5 圈拆 mp4 atom / 查 JIT shadow / 跑 ffmpeg。
+
+#### a. 看 user 的字串、檔名、URL，先做一遍特殊字元掃描
+`#`、`?`、`&`、空白、中文、`%`、`<>` — 任何出現在檔名/URL/ID 的字元都要先在腦中過「這會被誰解析」。
+**不要**直接跳去拆協議、查 mp4 atom、跑 ffmpeg。
+最先問的是：「這個字串塞給 `<video>.src` / `fetch()` / `<img>.src` 時，瀏覽器看到什麼？」
+
+#### b. 看到「codec 不支援」「格式錯誤」「找不到資源」時，第一步是查實際 URL
+```js
+// 在瀏覽器 console 或前端 debug log 加一行
+console.log('[video] 實際請求 =', video.currentSrc);
+```
+- `currentSrc` 是瀏覽器**真正用來發 request 的 URL**，經過它自己的 fragment 解析
+- 比對「後端給的」vs「currentSrc」— 不一致 = URL 編碼/fragment 問題
+- 對 audio：`bgAudio.currentSrc`
+
+#### c. 後端要寫 URL 時一律 `encodeURIComponent`
+無論 mp4、m4a、json field、redirect URL、log 輸出。
+**m4a 編碼了、mp4 沒編碼** → 不要事後才檢查一致性，**在生成 URL 的 helper 內統一強制**。
+
+#### d. 「我懷疑是 X 問題」時，先用一個最小指令驗證懷疑，再展開調研
+- 懷疑 mp4 損壞 → `ffprobe /path/to/file.mp4` 一行就能驗
+- 懷疑 server 給錯檔 → `curl -I /url` 看 Content-Type / Content-Length / Content-Range
+- 懷疑編碼問題 → 把 URL 直接貼到瀏覽器網址列，看會跳到哪
+
+不要「我覺得可能 X」就開始改 server 程式碼。
+
+#### e. Debug 時不要先懷疑自己的系統 — 先懷疑 user 提供的字串
+報錯是 user 看到的事實，先驗證「報錯訊息是不是真的」、「指的路徑是不是真的」、「檔名/URL 有沒有特殊字元」。
+不要看到「codec 不支援」就開始拆 codec — 那是瀏覽器的 fallback 訊息，不是根因。
+
+### 5.7 Bug 案例庫（2026-08-02 新增）
+
+> 用途: 把已破案的 bug 做成可複用的「下次不要再繞同條路」教材。
+> 新案例用 `#### Case #NNN：一句話標題 (YYYY-MM-DD)` 格式往下加。
+
+#### Case #001：「# 號變 URL Fragment 觸發 codec 誤報」(2026-08-02)
+- **症狀**：瀏覽器 `<video>` 報「影片 codec 不支援」，但 mp4 本體用 ffprobe 驗過完整無損
+- **根因**：檔名含 `#`（yt-dlp 下載 YouTube hashtag 保留）。server 把檔名接成 `/videos/#周深_...mp4`，瀏覽器把 `#` 後當 fragment，**實際請求 `/videos/`**（資料夾）。回 200 + HTML 目錄頁，`<video>` 解不出格式 → 觸發 audio-mode fallback，user 看到「codec 不支援」toast
+- **誤診路徑**：拆 mp4 atom、跑 ffmpeg probe、懷疑 JIT shadow 損壞、查 container mount、查 Range request — **整條岔路完全錯**
+- **正確第一步**：`console.log(video.currentSrc)` — 看到 `http://...:3001/videos/`（資料夾）而非檔案 → 一秒破案
+- **修法**：server 生成 URL 時一律 `encodeURIComponent(filename)`（見 §5.6c）
+- **預防**：寫新 URL helper 時，unit test 必須含 `#`、`?`、`&`、中文檔名
