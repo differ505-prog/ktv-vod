@@ -47,7 +47,7 @@ info "部署腳本位於: $SCRIPT_DIR"
 NAS_HOST="${NAS_HOST:-vibe@192.168.31.47}"
 NAS_PORT="${NAS_PORT:-22}"
 CONTAINER_NAME="${1:-}"
-CONTAINER_APP_DIR="/app"
+CONTAINER_APP_DIR="/app/ktv_pipeline"
 
 SSH_OPTS=(
     -o StrictHostKeyChecking=no
@@ -72,6 +72,9 @@ for f in main.py alignment.py test_alignment.py; do
         exit 1
     fi
 done
+# 確保 container 內的 ktv_pipeline 目錄存在
+ssh "${SSH_OPTS[@]}" "$NAS_HOST" \
+    "docker exec $CONTAINER_NAME mkdir -p $CONTAINER_APP_DIR" || true
 info "host 端檔案齊全 ✓"
 
 # ============================================================

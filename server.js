@@ -824,6 +824,8 @@ app.post('/api/songs/restore', (req, res) => {
     log('info', '從垃圾桶復原', { fileName, to: dst });
     // fs.watch 會自動偵測,rebuildLibrary 也會在輪詢時跑 (保險起見手動呼叫)
     setTimeout(() => { try { rebuildLibrary(); } catch (_) {} }, 500);
+    // 補抽 PWA 音軌: 復原的 mp4 在 trash 階段未必有 m4a, 背景觸發 pipeline 補抽
+    triggerPwaAudioBackfill('restore');
     return res.json({ success: true, fileName });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1394,9 +1396,37 @@ function startLibraryWatcher() {
   }, 30 * 1000);
 }
 
+/**
+ * 觸發 Pipeline 端的 PWA 背景音訊補抽 (idempotent, 非同步背景跑):
+ *   - 啟動時一次: 把歷史「先有 mp4 後漏 m4a」的歌曲補抽
+ *   - 之後每 30 分鐘兜底: 處理「電腦 cp 檔 / 垃圾桶復原」造成的 m4a 缺失
+ * 失敗不會影響主服務 (pipeline 沒起來就 log warn 跳過)
+ */
+async function triggerPwaAudioBackfill(reason) {
+  if (!PIPELINE_API_URL) return;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (PIPELINE_API_TOKEN) headers.Authorization = `Bearer ${PIPELINE_API_TOKEN}`;
+    const r = await fetch(`${PIPELINE_API_URL.replace(/\/+$/, '')}/pwa-audio/backfill`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+    });
+    const data = await r.json().catch(() => ({}));
+    log('info', 'PWA 音訊補抽觸發', { reason, http: r.status, running: data.running });
+  } catch (err) {
+    log('warn', 'PWA 音訊補抽觸發失敗 (不影響主服務)', { reason, err: err.message });
+  }
+}
+
 startLibraryWatcher();
 ensureTrashDir();
 ensureTvCacheDir();
+
+// 啟動立即觸發一次 (補歷史的漏網 m4a)
+triggerPwaAudioBackfill('startup');
+// 30 分鐘兜底輪詢
+setInterval(() => triggerPwaAudioBackfill('interval-30m'), 30 * 60 * 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();

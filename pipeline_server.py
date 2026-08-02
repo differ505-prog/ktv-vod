@@ -277,6 +277,113 @@ def list_songs():
     return jsonify({"success": True, "videos": files})
 
 
+# ===== PWA 背景音訊補抽 =====
+# 背景定時把 OUTPUT_DIR 裡「已有 mp4 但漏 m4a」的歌曲補抽,
+# 讓 iOS PWA 鎖屏播放時有對應音訊檔可用。
+# 不阻塞 /process 也不跟主 pipeline worker 搶資源 (用獨立守護執行緒)。
+import threading as _threading
+import subprocess as _subprocess
+
+_pwa_backfill_lock = _threading.Lock()
+_pwa_backfill_running = False
+
+
+def _sanitized_name_from_ktv_mp4(mp4_path: Path) -> str:
+    """從 *_ktv.mp4 抽回 sanitized_name,即剝掉 _ktv 後綴。"""
+    return mp4_path.stem[:-len("_ktv")] if mp4_path.stem.endswith("_ktv") else mp4_path.stem
+
+
+def _extract_pwa_audio_pair(mp4_path: Path, out_orig: Path, out_voc: Path) -> bool:
+    """
+    從 stereo mp4 (L=伴奏, R=人聲) 抽出兩條 mono m4a。
+    邏輯與 ktv_pipeline.main.stage_extract_pwa_audio 一致,
+    但這裡不依賴該函式 (避免 import 失敗時整個 pipeline crash)。
+    """
+    cmd_orig = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(mp4_path),
+        "-filter_complex", "[0:a:0]pan=mono|c0=0.5*c0+0.5*c1[a]",
+        "-map", "[a]",
+        "-c:a", "aac", "-b:a", "192k",
+        "-vn", "-f", "mp4",
+        str(out_orig),
+    ]
+    r1 = _subprocess.run(cmd_orig, capture_output=True, text=True, timeout=180)
+
+    cmd_voc = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(mp4_path),
+        "-af", "pan=mono|c0=c0",
+        "-c:a", "aac", "-b:a", "192k",
+        "-vn", "-f", "mp4",
+        str(out_voc),
+    ]
+    r2 = _subprocess.run(cmd_voc, capture_output=True, text=True, timeout=180)
+
+    if r1.returncode != 0 and r1.stderr:
+        log.warning("[pwa-backfill] 原唱抽出失敗 %s: %s", out_orig.name, r1.stderr.strip()[:200])
+    if r2.returncode != 0 and r2.stderr:
+        log.warning("[pwa-backfill] 伴奏抽出失敗 %s: %s", out_voc.name, r2.stderr.strip()[:200])
+    return r1.returncode == 0 and r2.returncode == 0
+
+
+def _pwa_backfill_worker():
+    """逐一掃 OUTPUT_DIR 內 mp4,對漏 m4a 的補抽。"""
+    global _pwa_backfill_running
+    audio_dir = OUTPUT_DIR.parent / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    candidates = sorted(OUTPUT_DIR.glob("*_ktv.mp4"))
+    log.info("[pwa-backfill] 開始掃描 %d 個 mp4", len(candidates))
+    fixed = 0
+    skipped = 0
+    failed = 0
+    for mp4 in candidates:
+        name = _sanitized_name_from_ktv_mp4(mp4)
+        out_orig = audio_dir / f"{name}.m4a"
+        out_voc = audio_dir / f"{name}-vocal-off.m4a"
+        if out_orig.exists() and out_voc.exists():
+            skipped += 1
+            continue
+        try:
+            ok = _extract_pwa_audio_pair(mp4, out_orig, out_voc)
+            if ok:
+                fixed += 1
+                log.info("[pwa-backfill] ✓ 補抽成功: %s", name)
+            else:
+                failed += 1
+                log.warning("[pwa-backfill] ✗ 補抽失敗: %s", name)
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            log.exception("[pwa-backfill] 補抽錯誤 %s: %s", name, e)
+    log.info("[pwa-backfill] 完成: fixed=%d skipped=%d failed=%d", fixed, skipped, failed)
+    _pwa_backfill_running = False
+
+
+@app.route("/pwa-audio/backfill", methods=["POST"])
+def pwa_audio_backfill():
+    """
+    觸發 PWA 背景音訊補抽 (idempotent)。
+
+    要求:  認證 (與 /process 一致)
+    行為:  若已有執行中的 backfill → 回 200 running=True; 否則啟動背景 worker。
+    用途:  Node 中控於啟動 / 程式碼偵測 library 變動時呼叫。
+    """
+    auth_err = require_auth()
+    if auth_err:
+        return auth_err
+
+    global _pwa_backfill_running
+    with _pwa_backfill_lock:
+        if _pwa_backfill_running:
+            return jsonify({"success": True, "running": True, "message": "已在背景執行中"}), 200
+        _pwa_backfill_running = True
+
+    t = _threading.Thread(target=_pwa_backfill_worker, name="pwa-backfill", daemon=True)
+    t.start()
+    return jsonify({"success": True, "running": True, "started": True})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
     log.info("Pipeline server 啟動於 0.0.0.0:%d", port)
