@@ -1201,17 +1201,13 @@ io.on('connection', (socket) => {
       addedBy: queuedSong.addedBy,
     });
 
-    const isAutoSong = !currentSong || currentSong.addedBy === 'Auto';
+    const isAutoSong = !currentSong;
     if (isAutoSong) {
-      // 系統自動選的歌 → 立刻切到新佇列歌曲
-      io.emit('stop_song');
-      if (currentSong) {
-        songHistory.push(currentSong);
-        if (songHistory.length > 50) songHistory.shift();
-      }
+      // 沒人在播 → 直接播下一首
       advanceToNextSong();
     } else {
-      // 用戶手動點的歌 → 只排進佇列，不打斷
+      // 不管上一首是 user 點還是 Auto 入的,只要「正在播」就不打斷
+      // (使用者報 bug: 即便 currentSong.addedBy === 'Auto' 也要播完才切)
       io.emit('playlist_updated', {
         playlist: [...playlist],
         currentSong,
