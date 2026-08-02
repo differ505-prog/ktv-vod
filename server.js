@@ -109,6 +109,10 @@ app.use(express.json({ limit: '1mb' }));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
+  // 對外網 (Tailscale Funnel / 反向代理) 友善：拉長 ping 容忍時間,
+  // 避免 idle 30 秒就被代理或 NAT 誤判斷線。
+  pingInterval: 25000,
+  pingTimeout: 60000,
 });
 
 // ===== 靜態託管 =====
@@ -1070,7 +1074,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('add_song', (songData) => {
+  socket.on('add_song', (songData, ack) => {
     let song;
     if (typeof songData === 'string') {
       song = SONG_LIBRARY.find((s) => s.id === songData);
@@ -1078,13 +1082,20 @@ io.on('connection', (socket) => {
       song = SONG_LIBRARY.find((s) => s.id === songData.id) || songData;
     }
 
+    const reply = (payload) => {
+      if (typeof ack === 'function') ack(payload);
+    };
+
     if (!song) {
+      log('warn', 'add_song 找不到歌曲', { songData, by: socket.id.substring(0, 6) });
       socket.emit('error_message', { message: '找不到這首歌' });
+      reply({ ok: false, reason: 'not_found' });
       return;
     }
 
     if (playlist.some((s) => s.id === song.id)) {
       socket.emit('error_message', { message: '這首歌已在待播清單中' });
+      reply({ ok: false, reason: 'duplicate' });
       return;
     }
 
@@ -1094,7 +1105,8 @@ io.on('connection', (socket) => {
       addedAt: Date.now(),
     };
     playlist.push(queuedSong);
-    log('info', '加入佇列', { title: queuedSong.title, by: queuedSong.addedBy });
+    log('info', '加入佇列', { title: queuedSong.title, by: queuedSong.addedBy, via: socket.handshake.headers['x-forwarded-for'] || socket.handshake.address });
+    reply({ ok: true, songId: song.id, title: song.title });
 
     // 自動喚醒 B: 廣播「有人點歌」給 TV,TV 顯示「已點播：xxx」toast 5 秒
     io.emit('song_added', {

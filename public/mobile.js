@@ -132,7 +132,17 @@
   }
 
   // ===== Socket.io =====
-  const socket = io({ reconnection: true });
+  // 對外網 (Tailscale Funnel / 反代) 友善:
+  //   - 先 polling 確認管道通暢, 再 upgrade WebSocket
+  //   - reconnection + reconnectionAttempts 上限,避免手機休眠時狂重連塞 server
+  const socket = io({
+    transports: ['polling', 'websocket'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
+  });
 
   socket.on('connect', () => {
     connLabel.innerHTML = '<i class="fa-solid fa-circle text-green-500 text-[8px]"></i> 已連線';
@@ -254,8 +264,24 @@
 
   // ===== 控制指令 =====
   function pickSong(songId) {
-    socket.emit('add_song', songId);
-    showToast('已加入點歌列隊！');
+    // ack 機制: 伺服器收到才算成功,才顯示 toast
+    // 防止 socket 連線不穩或 emit 卡住時,user 看到假成功訊息
+    let acked = false;
+    const ackTimer = setTimeout(() => {
+      if (!acked) {
+        showToast('伺服器沒回應,請檢查網路後再試', 'error');
+      }
+    }, 3000);
+
+    socket.emit('add_song', songId, (res) => {
+      acked = true;
+      clearTimeout(ackTimer);
+      if (res && res.ok) {
+        showToast(`已加入點歌列隊: ${res.title || ''}`.replace(/[\s:]+$/, ''));
+      } else {
+        // 伺服器已拒絕 (not_found / duplicate),讓原 error_message toast 自然顯示
+      }
+    });
   }
 
   btnSkip.addEventListener('click', () => {
