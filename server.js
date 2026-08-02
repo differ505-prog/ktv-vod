@@ -577,11 +577,24 @@ function rebuildLibrary() {
   if (added.length > 0) {
     const newSongs = fresh.filter((s) => added.includes(s.src));
 
+    // 守門員: pipeline 寫了 mp4 但 m4a (audioOriginal/audioVocalOff) 還沒抽好
+    // → 跳過自動加入,避免 tv 端 video error 觸發 song_ended → 馬上跳下一首。
+    // 同時也要 mp4 本體可開 (有 src),少數 pipeline 失敗只留空殼也擋下。
+    const completeNew = newSongs.filter((s) => {
+      const hasAudio = !!(s.audioOriginal || s.audioVocalOff || s.srcVocalOff);
+      if (!hasAudio) {
+        log('warn', '新歌尚未完整處理 (mp4 寫入但 m4a 未就緒), 略過自動入列', {
+          title: s.title, src: s.src,
+        });
+      }
+      return hasAudio;
+    });
+
     // 判斷目前是否有「使用者自選」歌曲排隊中
     // addedBy 為 'Auto' 或 undefined 的算「系統自動」，其他才算使用者自選
     const hasUserSongs = playlist.some((s) => s.addedBy && s.addedBy !== 'Auto');
 
-    for (const song of newSongs) {
+    for (const song of completeNew) {
       // 防重複：已在清單或正在播就跳過
       const alreadyQueued =
         playlist.some((s) => s.id === song.id) ||
@@ -613,6 +626,49 @@ function rebuildLibrary() {
         currentSong,
       });
     }
+  }
+
+  // ===== 補入: 之前被守門員擋下 (audio 尚未就緒) 的歌, 現在 audio 已 ready =====
+  // 情境: pipeline 先寫 mp4 → fs.watch 第一次掃 → 沒 m4a → 守門員擋下 → 不入列。
+  //       數秒後 pipeline 抽好 m4a → fs.watch 再次掃 → 這次 audio 齊了。
+  // 但 SONG_LIBRARY 內這首歌 audioOriginal 仍標 null (要等下次完整 rebuild 才會補)。
+  // 所以這裡補掃: 找出 library 內有 src 但 audioOriginal+srcVocalOff 雙 null 的歌,
+  // 重新掃磁碟看 audio 是否到位 → 到位就 enqueue。
+  for (const libSong of SONG_LIBRARY) {
+    if (!libSong.src) continue;
+    if (libSong.audioOriginal || libSong.audioVocalOff || libSong.srcVocalOff) continue;
+    // 已在 playlist / 正在播 → 跳過
+    if (playlist.some((s) => s.id === libSong.id)) continue;
+    if (currentSong && currentSong.id === libSong.id) continue;
+    // 重新確認 m4a 是否到位
+    const basename = decodeURIComponent(path.basename(new URL(libSong.src, 'http://x').pathname));
+    const raw = path.basename(basename, path.extname(basename));
+    const audioOrigExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}.m4a`));
+    const audioVocExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}-vocal-off.m4a`));
+    const vocalOffMp4Exists = fs.existsSync(path.join(VIDEO_DIR, `${raw}_vocal_off.mp4`));
+    if (!audioOrigExists && !audioVocExists && !vocalOffMp4Exists) continue;
+    // 補上 audio 欄位並 enqueue
+    const enriched = {
+      ...libSong,
+      audioOriginal: audioOrigExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(`${raw}.m4a`)}` : null,
+      audioVocalOff: audioVocExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(`${raw}-vocal-off.m4a`)}` : null,
+      srcVocalOff: vocalOffMp4Exists ? toPublicUrl(`${raw}_vocal_off.mp4`) : null,
+      addedBy: 'Auto',
+      addedAt: Date.now(),
+    };
+    const idx = SONG_LIBRARY.findIndex((s) => s.id === libSong.id);
+    if (idx >= 0) SONG_LIBRARY[idx] = enriched;
+    const hasUserSongs = playlist.some((s) => s.addedBy && s.addedBy !== 'Auto');
+    if (hasUserSongs) {
+      playlist.push(enriched);
+      log('info', '音訊補抽完成, 新歌加入排程末尾', { title: enriched.title });
+    } else {
+      playlist.unshift(enriched);
+      log('info', '音訊補抽完成, 新歌插隊優先播放', { title: enriched.title });
+    }
+  }
+  if (playlist.length > 0 && !currentSong) {
+    advanceToNextSong();
   }
 
   return { changed: true, added: added.length, removed: removed.length };
@@ -1116,7 +1172,10 @@ const songHistory = [];
 // 自動播放時追蹤已播過的歌曲ID，避免短時間重複
 const autoPlayedIds = new Set();
 const AVOID_RECENT_COUNT = 20;
-const SONG_TIMEOUT_MS = 5 * 60 * 1000;
+// 歌曲播完保險超時: tv 端的 video.ended 或 audio-mode bgAudio.ended 是正常路徑。
+// 但若 ended 事件漏觸 (Safari/iOS PWA 已知問題), 為避免永遠卡在這首歌,設保險上限。
+// 30 分鐘: 遠大於任何歌的長度,只在異常情境觸發。
+const SONG_TIMEOUT_MS = 30 * 60 * 1000;
 let songTimeout;
 
 function getNextSong() {
