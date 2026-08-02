@@ -52,7 +52,7 @@
   // ===== 下一首倒數狀態 =====
   let nextSong = null;          // playlist_updated 裡的下一首
   let countdownInterval = null;
-  const COUNTDOWN_TRIGGERS = [30, 15, 5]; // 秒數閾值
+  const COUNTDOWN_TRIGGERS = [5]; // 只在剩 5 秒時預告一次
 
   // ===== 沉浸模式狀態 =====
   let immersive = false;          // 是否進入沉浸模式 (CSS class)
@@ -586,6 +586,7 @@ function setAudioMode(on) {
     audioModeBtnLabel.textContent = audioMode ? 'TV 模式' : '音樂模式';
   }
   console.log('[音樂模式] 切換為', audioMode ? 'ON' : 'OFF');
+  _bgAudioErrorEmitted = false; // 重置錯誤旗標 (mode 切換 = 全新輪播)
 
   // 切到音樂模式:把現在播的歌交給 bgAudio (iOS 才能背景播)
   // 切回 TV 模式:停 bgAudio,讓 <video> 接手
@@ -655,6 +656,41 @@ bgAudio.addEventListener('ended', () => {
   }
 });
 
+// 音樂模式「背景連續播放」防破壞:
+//   - m4a 缺檔 / 404 / 不支援 codec → bgAudio error 但不會 fire ended
+//   - 原本 user 卡在無聲狀態 (開車聽音樂最煩)
+//   - 修法: error → 視為播完, 走下一首 + 顯示 toast 告知
+let _bgAudioErrorEmitted = false;
+function _showAudioErrorToast(msg) {
+  let t = document.getElementById('bgAudioErrorToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'bgAudioErrorToast';
+    t.className = 'fixed top-20 left-1/2 -translate-x-1/2 z-50 panel rounded-xl px-4 py-2 text-sm text-yellow-200';
+    t.style.pointerEvents = 'none';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(window.___bgAudioErrT);
+  window.___bgAudioErrT = setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+bgAudio.addEventListener('error', () => {
+  if (!audioMode) return;
+  const src = bgAudio.currentSrc || bgAudio.src;
+  console.error('[bgAudio] error → 自動跳下一首', { src, code: bgAudio.error?.code });
+  if (_bgAudioErrorEmitted) return;
+  _bgAudioErrorEmitted = true;
+  _showAudioErrorToast('音訊載入失敗 (缺檔或不支援),自動跳下一首');
+  // 0.8s 後通知後端切歌 (給 user 一點時間看到 toast)
+  setTimeout(() => {
+    if (!_songEndedEmitted) {
+      _songEndedEmitted = true;
+      socket.emit('song_ended');
+    }
+  }, 800);
+});
+
 function updateMediaSession(song) {
   if (!('mediaSession' in navigator) || !song) return;
   try {
@@ -681,6 +717,7 @@ let audioCurrentTrack = 'original'; // 記住 audio-mode 目前播原唱還是�
 
 function playBgAudio(song) {
   if (!song) return;
+  _bgAudioErrorEmitted = false; // 切歌 → 重置錯誤旗標
   const src = getAudioModeSrc(song, audioCurrentTrack);
   console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode });
   if (!src) {
