@@ -48,7 +48,7 @@ const AUDIO_URL_PREFIX = '/audio';
 // 持久化方案:  本地歌的 title/artist 編輯寫到 /ktv-data/song-edits.json,
 //   以 src 為 key; 啟動時 + 每次 rebuild 後套用回 SONG_LIBRARY。
 // 為什麼用 src 不用 id:  src 是磁碟檔名路徑,跨重啟穩定; id 會重編。
-const SONG_EDITS_FILE = process.env.SONG_EDITS_FILE || path.join(path.dirname(VIDEO_DIR), 'song-edits.json');
+const SONG_EDITS_FILE = process.env.SONG_EDITS_FILE || path.join(path.dirname(VIDEO_DIR), 'tv_cache', 'song-edits.json');
 
 // 預設編輯 seed：用來在「沒有持久檔」時替已命名的歌提供預設 title/artist
 // 對應檔名 src (raw, 與 SONG_LIBRARY 上的 s.src 一致) → { title, artist }
@@ -232,16 +232,20 @@ app.use(
 );
 
 // ===== JIT Shadow Library 路由 =====
-app.get('/tv-videos/:filename', async (req, res) => {
-  const filename = req.params.filename;
-  if (!filename || filename.includes('..') || filename.includes('/')) {
-    return res.status(400).send('Invalid filename');
+app.get('/tv-videos/:filename(*)', async (req, res) => {
+  const pfn = req.params.filename;
+  const p0 = req.params[0];
+  // 分開檢查避免 Express :param(*) 語法衝突：含 / 的 URL 會錯誤地將 path 存入 req.params
+  if ((pfn && pfn.indexOf('/') >= 0) || (p0 && p0.indexOf('/') >= 0)) {
+    return res.status(400).send('invalid-chars');
   }
-
+  const filename = pfn || p0;
+  if (!filename) { res.status(400).send('empty'); return; }
+  if (filename.indexOf('..') >= 0) { res.status(400).send('invalid-chars'); return; }
+  const ext = path.extname(filename).toLowerCase();
+  if (ext !== '.mp4' && ext !== '.webm' && ext !== '.mkv') { res.status(400).send('bad-ext'); return; }
   const origPath = path.join(VIDEO_DIR, filename);
-  if (!fs.existsSync(origPath)) {
-    return res.status(404).send('Not found');
-  }
+  if (!fs.existsSync(origPath)) { res.status(404).send('not-found'); return; }
 
   const sendVideo = (filePath) => {
     res.setHeader('Content-Type', 'video/mp4');
@@ -297,12 +301,12 @@ app.get('/tv-videos/:filename', async (req, res) => {
  * 變更紀錄:
  *   - 2026-08-01 新增 (解決朋友家 Funnel + MV 模式 機械音)
  */
-app.get('/tv-videos-no-range/:filename', (req, res) => {
+app.get('/tv-videos-no-range/:filename(*)', (req, res) => {
+  // 同 /tv-videos/:filename(*)：regex param 避免 /* 對含 / 的 filename 行為不符預期
   const filename = req.params.filename;
-  if (!filename || filename.includes('..') || filename.includes('/')) {
+  if (!filename || filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0) {
     return res.status(400).send('Invalid filename');
   }
-
   const origPath = path.join(VIDEO_DIR, filename);
   if (!fs.existsSync(origPath)) {
     return res.status(404).send('Not found');
@@ -469,8 +473,8 @@ function scanLocalVideos() {
           title,
           artist,
           duration: '未知',
-          src: toPublicUrl(f), // 透過 /videos prefix 提供
-          srcVocalOff: vocalOffExists ? toPublicUrl(vocalOffName) : null,
+          src: toPublicUrl(encodeURIComponent(f)), // 透過 /videos prefix 提供
+          srcVocalOff: vocalOffExists ? toPublicUrl(encodeURIComponent(vocalOffName)) : null,
           // PWA 背景音訊:若有 .m4a 就提供 URL,iOS 鎖屏播放用
           audioOriginal: audioOrigExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioOrigName)}` : null,
           audioVocalOff: audioVocExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioVocName)}` : null,

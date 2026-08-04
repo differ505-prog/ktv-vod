@@ -109,10 +109,13 @@ def main(processed_dir: str | os.PathLike, dry_run: bool = False) -> int:
     fail = []
 
     for mp4 in mp4s:
-        sanitized_name = mp4.stem  # e.g. "周杰倫_夜曲_ktv" -> basename 給 metadata
+        raw_stem = mp4.stem  # e.g. "周杰倫_夜曲_ktv"
+        # sanitize 防止含 / 或其他危險字元的舊檔名帶進系統
+        sanitized_stem = sanitize_filename(raw_stem)
 
         # 已經有 metadata 的就跳過
-        meta_path = p / f"{mp4.stem.replace('_ktv', '')}.json"
+        meta_check_stem = sanitized_stem.replace("_ktv", "")
+        meta_path = p / f"{meta_check_stem}.json"
         if meta_path.exists():
             log.debug(f"[skip] 已有 metadata: {meta_path.name}")
             skip += 1
@@ -123,9 +126,9 @@ def main(processed_dir: str | os.PathLike, dry_run: bool = False) -> int:
             if dry_run:
                 log.info(f"[dry-run] {mp4.name} → title={metadata.title!r}, artist={metadata.artist!r}")
             else:
-                # 寫到 sanitized_stem.json
-                sanitized_stem = mp4.stem.replace("_ktv", "")
-                target = p / f"{sanitized_stem}.json"
+                # 用 sanitize 過的 stem，避免含 / 的舊檔名帶進系統
+                base = sanitized_stem.replace("_ktv", "")
+                target = p / f"{base}.json"
                 with open(target, "w", encoding="utf-8") as f:
                     json.dump(metadata.to_dict(), f, ensure_ascii=False, indent=2)
                 ok += 1

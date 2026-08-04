@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-08-02（§5.6 新增 Debug 根因排查守則；§5.7 新增 Bug 案例庫；§5.4k 新增「字串懷疑優先」）
+最後更新：2026-08-04（§5.7 新增 Case #002：正則參數衝突；新增 §5.8 時間浪費檢討）
 
 ---
 
@@ -257,3 +257,23 @@ console.log('[video] 實際請求 =', video.currentSrc);
 - **正確第一步**：`console.log(video.currentSrc)` — 看到 `http://...:3001/videos/`（資料夾）而非檔案 → 一秒破案
 - **修法**：server 生成 URL 時一律 `encodeURIComponent(filename)`（見 §5.6c）
 - **預防**：寫新 URL helper 時，unit test 必須含 `#`、`?`、`&`、中文檔名
+
+#### Case #002：「正則參數衝突導致含 / URL 返回 400」(2026-08-04)
+- **症狀**：「影片 codec 不支援」→ audio mode fallback；但 ffprobe 驗過 codec 正常（H.264+AAC）
+- **根因**：`/tv-videos/:filename(*)` 的 `(*)` 語法同時把 matched segment 存入 `req.params.filename` 與 `req.params[0]`。當 URL 含 `/` 時，Express 4.22+ 錯誤地存入 `req.params.filename`，後續 `indexOf('/')` 直接命中，即使 filename 本身不含 `/`
+- **誤診路徑**：拆 mp4 atom、查 JIT shadow、驗 AV1/H.264 codec、懷疑陰影檔損壞
+- **正確第一步**：加一行 `console.log('[tv-videos] pfn=' + JSON.stringify(req.params.filename))` — 看到含 `/` 的 path 就破案
+- **修法**：分開檢查 `pfn` 和 `p0`，各自對應各自參數的合法性（見 `server.js` `/tv-videos/` route）
+- **預防**：`batch_backfill.py` 對已存在舊檔名做 sanitize，防止含 `/` 的檔名帶進系統（2026-08-04）
+
+### 5.8 浪費時間檢討（2026-08-04）
+
+**問題**：整個 debug 過程繞了 10+ 圈，user 最後自己破案。
+
+| 環節 | 浪費點 | 以後做法 |
+|---|---|---|
+| 「codec 不支援」的訊息 | 視為 codec 問題處理，而不是 browser fallback 訊息 | 依 §5.6b，**第一步**一定是 `console.log(video.currentSrc)` |
+| 拆 mp4 atom | 完全不需要，server 返回 400 了跟 codec 無關 | §5.6d：先用 `curl -I` 驗 HTTP status code |
+| 查 AV1 vs H.264 | 浪費 30 分鐘，檔案本身是 H.264 | 同上，先確認「這個 URL 到底返回什麼」 |
+| rsync/deploy 中斷 | 每次 deploy 沒驗證新程式碼真的進了 container | §5.5：部署完立刻 `grep 'bad-ext' /app/server.js` 確認 |
+| 沒有定期重啟驗證 | 一直在舊程式碼上改參數 | 每次改完 `server.js` 必須 rsync + docker cp + restart，別中斷 |
