@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-08-04（§5.7 新增 Case #002：正則參數衝突；新增 §5.8 時間浪費檢討）
+最後更新：2026-08-05（§5.9 新增檔名禁用 `#/&/%` 防呆；§5.7 補 Case #003）
 
 ---
 
@@ -60,6 +60,7 @@
 |---|---|---|
 | **KTV** | `https://vibe-nas.taila67710.ts.net/tv.html` | host `:3001` |
 | Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | host `:8096` |
+| worldmonitor | `https://vibe-nas.taila67710.ts.net:10000/` | host `:8081` |
 
 ### 6.2 設定指令（sudo）
 
@@ -70,16 +71,32 @@ echo '05050505' | sudo -S tailscale set --operator=$(whoami)
 # 加 KTV Funnel（占 443，與 Jellyfin 8443 不衝突）
 echo '05050505' | sudo -S tailscale funnel --bg --https=443 http://localhost:3001
 
+# 加 worldmonitor Funnel（占 10000）
+echo '05050505' | sudo -S tailscale funnel --bg --https=10000 http://localhost:8081
+
 # 檢視
-sudo tailscale funnel status
+sudo tailscale serve status
 ```
 
 ### 6.3 重要約束
 
 - Funnel 預設走 **HTTPS port 443**，沒法直接換 port — 想用其他 port 必須在 Tailscale admin 後台 ACL 開「allow funnel on port X」。
-- Jellyfin 已用 `:8443` Funnel，KTV 用 `:443`，兩者**不會互相覆蓋**。
+- Jellyfin 已用 `:8443` Funnel，KTV 用 `:443`，worldmonitor 用 `:10000`，三者**不會互相覆蓋**。
 - Tailscale Funnel 的 `*.ts.net` 是**公開 HTTPS**，瀏覽器直接打就能連（朋友不必裝 Tailscale），跟 Quick Tunnel 行為類似。
 - KTV APK 用 `window.location.host` 組 server URL，所以連外網 Funnel 自動走 https，無需改 APK。
+
+### 6.3.1 Funnel watchdog（2026-08-07 修憲）
+
+Tailscale Funnel **沒有 self-heal**：funnel 規則被某個 process (`tailscale serve reset`、其他 tailscale ACL 變更、tailscaled 重啟後讀不到舊 config) 動到後，外網就會一直 404。**必須用 systemd timer 自動重設**。
+
+- script: `ktv-pipeline/funnel_watchdog.sh`
+- 安裝: `bash ktv-pipeline/install_funnel_watchdog.sh` (systemd timer + log `/var/log/funnel-watchdog.log`)
+- 卸載: `bash ktv-pipeline/install_funnel_watchdog.sh --remove`
+- 頻率: 5 分鐘一次
+- 動作: 檢查 2 條公開 URL + 本地 3001 → 任一失敗就 `tailscale serve reset` + 重加 2 條 funnel
+- 檢查狀態: `systemctl status funnel-watchdog.timer` 跟 `tail -f /var/log/funnel-watchdog.log`
+
+> **不要再相信「有 port 守衛」這種口頭印象**。要嘛 script 在跑、要嘛就是沒有。debug 外網 404 第一動: `systemctl status funnel-watchdog.timer`。
 
 ### 6.4 為什麼不只用 Cloudflare Quick Tunnel？
 
@@ -265,6 +282,34 @@ console.log('[video] 實際請求 =', video.currentSrc);
 - **正確第一步**：加一行 `console.log('[tv-videos] pfn=' + JSON.stringify(req.params.filename))` — 看到含 `/` 的 path 就破案
 - **修法**：分開檢查 `pfn` 和 `p0`，各自對應各自參數的合法性（見 `server.js` `/tv-videos/` route）
 - **預防**：`batch_backfill.py` 對已存在舊檔名做 sanitize，防止含 `/` 的檔名帶進系統（2026-08-04）
+
+#### Case #003：「5 首既有歌曲檔名含 `#`」(2026-08-05)
+- **症狀**：達拉崩吧事件事後掃庫，發現 150 首歌裡還有 5 首檔名含 `#`（同 Case #001 根因），包含當事主 `#周深_封神之曲《达拉崩吧》_ktv.mp4`。
+- **根因**：yt-dlp 下載 YouTube 影片時，若標題含 hashtag 會原樣保留到檔名。`sanitize_filename` regex 沒把 `#` 列為 unsafe。
+- **修法**：
+  1. `sanitize_filename` regex 改為 `[|\\/:*?"<>#%\x00-\x1f]`
+  2. 批次 rename 5 個 `_ktv.mp4` + 20 個 audio + 更新 `song-edits.json` 44 個 entries
+  3. 備份到 `/ktv-data/_Trash/hash-rename-20260805/`
+- **預防**：§5.9 強制禁用 `#/?/&/%`，雙重保護（sanitize + server encodeURIComponent）。
+
+### 5.9 檔名禁用字元防呆（2026-08-05 新增）
+
+> **不可違反**：任何寫入 `ktv-data/processed/` 或 `ktv-data/audio/` 的檔案，**禁止含 `#`、`?`、`&`、`%`**。
+> 已在 `ktv-pipeline/metadata.py::sanitize_filename` 統一處理。
+
+**禁用清單與影響**：
+
+| 字元 | 影響 |
+|---|---|
+| `#` | 瀏覽器當 fragment，tv.html 拿不到檔案（Case #001） |
+| `?` | URL query 開始，後端解析錯亂 |
+| `&` | URL query 分隔，相同問題 |
+| `%` | URL 編碼字元，未編碼字串會 decode 失敗 |
+| `/` `\ ` `:` `*` `"` `<` `>` `\|` | OS 檔名不允許 |
+
+**修法**：用 `sanitize_filename` 處理 yt-dlp 下載後的所有檔名。server 端 **也** 一律 `encodeURIComponent`（見 §5.6c），雙重保險。
+
+**操作 SOP**：若發現 processed/ 已含禁用字元檔案 → 一次批次 rename 為 `_`，並同步更新 `tv_cache/song-edits.json` 的 keys。操作前備份到 `_Trash/hash-rename-YYYYMMDD/before.txt`。
 
 ### 5.8 浪費時間檢討（2026-08-04）
 
