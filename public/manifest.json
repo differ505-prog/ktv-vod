@@ -1,0 +1,17 @@
+{
+  "name": "CouchMic — KTV 點歌",
+  "short_name": "CouchMic",
+  "description": "手機點歌、電視播放。支援音樂模式背景播放。",
+  "start_url": "/tv.html?mode=audio",
+  "scope": "/",
+  "display": "minimal-ui",
+  "orientation": "any",
+  "background_color": "#05050a",
+  "theme_color": "#ec4899",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

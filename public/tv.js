@@ -12,6 +12,25 @@
   // ===== 元素 =====
   const video = document.getElementById('player');
   const bgAudio = document.getElementById('bgAudio'); // 音樂模式背景播放
+
+  // 背景播放診斷：記錄 iOS 是否真的以主畫面 Web App 執行，以及 audio 是否被系統暫停。
+  const audioRuntime = () => ({
+    mode: audioMode,
+    visibility: document.visibilityState,
+    standalone: Boolean(navigator.standalone || window.matchMedia?.('(display-mode: standalone)').matches),
+    audioSrc: bgAudio?.currentSrc || bgAudio?.src || '',
+    paused: bgAudio?.paused,
+    readyState: bgAudio?.readyState,
+    networkState: bgAudio?.networkState,
+    error: bgAudio?.error?.code || null,
+  });
+  const logAudioRuntime = (event, extra = {}) => console.log('[bgAudio:lifecycle]', event, { ...audioRuntime(), ...extra });
+  ['play', 'playing', 'pause', 'ended', 'error', 'stalled', 'waiting'].forEach((event) => {
+    bgAudio?.addEventListener(event, () => logAudioRuntime(event));
+  });
+  document.addEventListener('visibilitychange', () => logAudioRuntime('visibilitychange'));
+  window.addEventListener('pagehide', (event) => logAudioRuntime('pagehide', { persisted: event.persisted }));
+  window.addEventListener('pageshow', (event) => logAudioRuntime('pageshow', { persisted: event.persisted }));
   const nowPlayingTitle = document.getElementById('nowPlayingTitle');
   const nowPlayingArtist = document.getElementById('nowPlayingArtist');
   const audioModeLabel = document.getElementById('audioModeLabel');
@@ -532,7 +551,13 @@ function initAudioGraph() {
   video.addEventListener('ended', _emitSongEnded);
 
   video.addEventListener('error', (e) => {
-    console.error('[video] error', e, 'src=', video.currentSrc, 'codec可能不支援');
+    const err = video.error;
+    console.error('[video] error code=', err?.code, 'msg=', err?.message, 'src=', video.currentSrc);
+    // Fallback: 只在解碼錯誤 (code=3) 才認定是 codec 不支援，其他 error 可能是網路/暫時性的，不該觸發 fallback
+    if (err && err.code !== 3) {
+      console.warn('[video] error code', err.code, '不是解碼錯誤，不觸發 audio-mode fallback');
+      return;
+    }
     // Fallback: AV1 mp4 在 iOS Safari 會直接 error → 試改用 m4a 音訊播 (audio-mode)。
     // 條件: 還沒 fallback 過、且 currentSong 有 audioOriginal/audioVocalOff、且沒發過 ended
     if (!_videoFallbackTried && currentSongRef && !_songEndedEmitted) {
@@ -591,6 +616,7 @@ function setAudioMode(on) {
   // 切到音樂模式:把現在播的歌交給 bgAudio (iOS 才能背景播)
   // 切回 TV 模式:停 bgAudio,讓 <video> 接手
   if (on && currentSongRef) {
+    logAudioRuntime('mode-on', { songId: currentSongRef.id });
     // 等一首具備 .m4a 的歌才切
     audioCurrentTrack = currentAudioMode === 'vocal_off' ? 'vocal_off' : 'original';
     playBgAudio(currentSongRef);
@@ -648,6 +674,20 @@ if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('seekbackward', () => { bgAudio.currentTime = Math.max(0, bgAudio.currentTime - 10); });
   navigator.mediaSession.setActionHandler('seekforward', () => { bgAudio.currentTime = Math.min(bgAudio.duration || 0, bgAudio.currentTime + 10); });
 }
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => console.log('[pwa] service worker 註冊成功 scope=', reg.scope)).catch((err) => console.warn('[pwa] service worker 註冊失敗:', err));
+  });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  if (audioMode) {
+    logAudioRuntime('audio-mode-startup', { reason: 'query-mode=audio' });
+  } else {
+    console.log('[bgAudio:lifecycle] startup (audio-mode 關閉)', audioRuntime());
+  }
+});
 
 bgAudio.addEventListener('ended', () => {
   // 通知後端切下一首 (只在 audio-mode 才有作用)
@@ -721,6 +761,7 @@ function playBgAudio(song) {
   const src = getAudioModeSrc(song, audioCurrentTrack);
   console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode });
   if (!src) {
+    logAudioRuntime('fallback-video', { reason: 'missing-audio-src', songId: song.id, title: song.title });
     // 沒有預抽 m4a → 退而求其次,讓 <video> 繼續播 (但 iOS 鎖屏會停)。
     // 顯示一條非阻擋 toast,告訴 user 此歌暫不支援背景播放。
     // 同時通知 server 用 ffmpeg 即時補抽 audioOriginal (給未來這首歌或下一輪用)
@@ -756,12 +797,14 @@ function playBgAudio(song) {
     bgAudio.play().then(() => {
       console.log('[bgAudio] play() 成功, paused=', bgAudio.paused, 'currentTime=', bgAudio.currentTime);
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      logAudioRuntime('playback-started', { currentTime: bgAudio.currentTime });
     }).catch((err) => console.warn('[bgAudio] play 失敗：', err.name, err.message));
   };
   bgAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true });
   bgAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true });
   // cached m4a 不會觸發 canplay → 1.5s 後主動試
   setTimeout(() => tryStart('1500ms-timeout'), 1500);
+  logAudioRuntime('playBgAudio-queued', { src, audioCurrentTrack, audioMode });
 }
 
 function stopBgAudio() {

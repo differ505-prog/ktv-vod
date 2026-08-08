@@ -6,8 +6,9 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
   <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg?v=3" />
   <meta name="theme-color" content="#ec4899" />
-  <meta name="apple-mobile-web-app-capable" content="no" />
-  <meta name="mobile-web-app-capable" content="no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="/manifest.json" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="CouchMic" />
   <title>🎤 CouchMic — TV 播放端</title>
@@ -240,11 +241,13 @@
       /* toast 在音樂模式仍要保留通知用 */
       display: block !important;
     }
-    /* 音樂模式下:右上角「退出」按鈕常駐可見,避免 audio-mode/immersive 卡住 user */
+    /* 沉浸/音樂模式時:右上角「退出」按鈕常駐可見 (不淡化, 不需 hover, 確保 user 任何時候找得到) */
     body.audio-mode #exitImmersiveBtn,
     body.immersive #exitImmersiveBtn {
       display: flex !important;
       pointer-events: auto !important;
+      opacity: 1 !important;
+      box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.4), 0 10px 30px rgba(0, 0, 0, 0.6);
     }
     /* 非沉浸/非音樂模式時:右上角按鈕縮小,只在 hover 時突出 (降低視覺干擾) */
     body:not(.immersive):not(.audio-mode) #exitImmersiveBtn {
