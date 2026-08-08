@@ -38,6 +38,14 @@ services:
       - ktv-data:/ktv-data
       # 即時熱更新：rsync 部署到 ./public/ 後容器直接讀到，無需 docker cp
       - ./public:/app/public:ro
+    # Log rotation: docker 預設 json-file driver 不會 rotate,塞滿會拒絕寫入
+    # 2026-08-09: docker log driver 預設值沒有 max-size,log 會無限增長
+    # 10MB × 3 檔 ≈ 30MB 循環,夠事後追問題用,又不會塞硬碟
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s

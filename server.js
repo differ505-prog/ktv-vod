@@ -1614,6 +1614,45 @@ triggerPwaAudioBackfill('startup');
 // 30 分鐘兜底輪詢
 setInterval(() => triggerPwaAudioBackfill('interval-30m'), 30 * 60 * 1000);
 
+// 啟動時 sanity check: 抓 SONG_LIBRARY 第一首的 src,確認對外 URL 真的能通。
+// 抓不到通常是 PUBLIC_PATH_PREFIX 配錯或 nginx rewrite 規則壞掉 (2026-08-09 case)。
+// 只在啟動跑一次,不打擾 hot reload。
+// 
+// 限制說明 (誠實版):
+//   - container 內 fetch 用 127.0.0.1:PORT + 去掉 PUBLIC_PATH_PREFIX 的路徑
+//     → 只能驗「app.use 內部路由」對不對,驗不到「nginx proxy + PUBLIC_PATH_PREFIX」是否配對。
+//   - 真正的 nginx 配置錯誤必須從外部 (瀏覽器、curl from internet) 才能抓到。
+//   - 因此這個 check 主要是「server 自己吐的 URL 跟 app.use 綁定的一致性」回歸測試。
+async function bootSanityCheck() {
+  if (SONG_LIBRARY.length === 0) {
+    log('warn', '啟動 sanity check 跳過: 歌曲庫是空的');
+    return;
+  }
+  const first = SONG_LIBRARY[0];
+  // 去掉 PUBLIC_PATH_PREFIX (e.g. /ktv/videos/xxx → /videos/xxx),用內部 port 抓
+  const internalPath = PUBLIC_PATH_PREFIX
+    ? first.src.replace(PUBLIC_PATH_PREFIX, '')
+    : first.src;
+  const internalUrl = `http://127.0.0.1:${PORT}${internalPath}`;
+  try {
+    const r = await fetch(internalUrl, { method: 'HEAD' });
+    if (r.ok) {
+      log('info', '啟動 URL 驗證通過 (內部路由)', {
+        title: first.title,
+        internalUrl,
+        publicUrl: first.src,
+        status: r.status,
+      });
+    } else {
+      log('error', '🚨 啟動 URL 驗證失敗 (內部路由) — app.use 或 src 格式錯了', {
+        title: first.title, internalUrl, publicUrl: first.src, status: r.status,
+      });
+    }
+  } catch (e) {
+    log('warn', '啟動 URL 驗證 fetch 拋錯', { internalUrl, err: e.message });
+  }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   const displayHost = PUBLIC_HOST || ip;
@@ -1626,6 +1665,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  🔌 API：     http://localhost:${PORT}/api/songs`);
   console.log(`  📁 影片庫：  ${VIDEO_DIR}`);
   console.log(`  🗑️  垃圾桶：  ${TRASH_DIR}  (主揪模式 PIN: ${HOST_PIN === '0000' ? '0000 (預設)' : '已自訂'})`);
+  console.log(`  🌐 PUBLIC_PATH_PREFIX: ${PUBLIC_PATH_PREFIX || '(none)'}`);
   if (PIPELINE_API_URL) {
     console.log(`  🎬 Pipeline: ${PIPELINE_API_URL}`);
   } else {
@@ -1633,4 +1673,5 @@ server.listen(PORT, '0.0.0.0', () => {
   }
   console.log('═══════════════════════════════════════════');
   console.log('');
+  bootSanityCheck();
 });
