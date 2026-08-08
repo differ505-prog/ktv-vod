@@ -29,6 +29,26 @@
     bgAudio?.addEventListener(event, () => logAudioRuntime(event));
   });
   document.addEventListener('visibilitychange', () => logAudioRuntime('visibilitychange'));
+// [A+ 9.5 分修法] PWA 從背景回到前景時,撿回被 iOS 暫停的 audio / 補做延遲的切歌
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  // 1) 補做延遲的 src swap + play
+  if (_pendingBgAudioPlay) {
+    console.log('[bgAudio] visibilitychange → 執行延遲的 playBgAudio');
+    const pending = _pendingBgAudioPlay;
+    _pendingBgAudioPlay = null;
+    // 重新進場會走正常的「同 src 略過 / 不同 src swap」邏輯
+    playBgAudio(pending.song);
+    return;
+  }
+  // 2) 沒 pending 但 audio 該在播卻 paused → 強 resume (iOS 鎖屏後常見)
+  if (audioMode && bgAudio.paused && bgAudio.src) {
+    console.log('[bgAudio] visibilitychange → resume paused audio');
+    bgAudio.play().then(() => {
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    }).catch((e) => console.warn('[bgAudio] visibility-resume 失敗:', e));
+  }
+});
   window.addEventListener('pagehide', (event) => logAudioRuntime('pagehide', { persisted: event.persisted }));
   window.addEventListener('pageshow', (event) => logAudioRuntime('pageshow', { persisted: event.persisted }));
   const nowPlayingTitle = document.getElementById('nowPlayingTitle');
@@ -669,6 +689,15 @@ if (document.body.classList.contains('immersive') && immersiveQrCode && !immersi
 //   - TV mode 時: 維持原本的 <video> + Web Audio graph 流程
 //   - 切回 TV mode 時: 同步把 bgAudio 暫停,讓 video 接手
 //   - audioMode 切換 (原唱/伴奏) 時: 重新給 bgAudio 餵對應的 .m4a URL
+//
+// [A+ 9.5 分修法] iOS PWA 背景切歌根因:
+//   1. src swap 在 document.hidden 時,iOS WebKit 會拒絕 play() (NotAllowedError,沒 user gesture)
+//   2. 多次連續 src swap → 多個 play promise race,iOS 視為「背景濫用」殺掉 session
+// 解法三件套:
+//   (a) 同一個 <audio> element instance,只 swap src (不要 removeAttribute + load)
+//   (b) 用 AbortController 取消上一輪的 canplay/loadeddata 監聽,避免 race
+//   (c) document.hidden 時不直接 src swap,延遲到 visibilitychange 進 foreground
+//       → 那時 user 已經「回到」app,iOS 給的 grace period 內可正常 play()
 
 if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('play', () => bgAudio.play().catch(() => {}));
@@ -757,11 +786,17 @@ function getAudioModeSrc(song, track) {
 
 let audioCurrentTrack = 'original'; // 記住 audio-mode 目前播原唱還是伴奏
 
+// [A+ 9.5 分修法] 延遲切歌用 state:
+//   - _pendingBgAudioPlay:document.hidden 時存進去,等 visibilitychange 進 foreground 再執行
+//   - _bgAudioLoadAbort:上一輪的 canplay/loadeddata 監聽,避免 race 雙觸發
+let _pendingBgAudioPlay = null;
+let _bgAudioLoadAbort = null;
+
 function playBgAudio(song) {
   if (!song) return;
   _bgAudioErrorEmitted = false; // 切歌 → 重置錯誤旗標
   const src = getAudioModeSrc(song, audioCurrentTrack);
-  console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode });
+  console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode, hidden: document.hidden });
   if (!src) {
     logAudioRuntime('fallback-video', { reason: 'missing-audio-src', songId: song.id, title: song.title });
     // 沒有預抽 m4a → 退而求其次,讓 <video> 繼續播 (但 iOS 鎖屏會停)。
@@ -774,23 +809,40 @@ function playBgAudio(song) {
     }
     return;
   }
-  // iOS PWA 切歌根因: 設定 src → play() 太快,iOS 還在 fetch 新資源時丟
-  // NotAllowedError (非 user gesture)。解法: 等 canplay/loadedmetadata 後再 play,
-  // 並設 1.5s timeout 主動 retry (cached 資源不會觸發 canplay)。
   const srcFile = src.split('/').pop();
+
+  // [A+ 修法 (c)] document.hidden 時不要直接 swap src + play — iOS 會拒。
+  // 改成「延遲到 visibilitychange 進 foreground」,在 user 回到 app 那刻一口氣做掉。
+  if (document.hidden) {
+    console.log('[bgAudio] PWA 隱藏中,延遲 src swap 到 visibilitychange');
+    _pendingBgAudioPlay = { song, src, srcFile };
+    return;
+  }
+
+  // 同 src (change_audio_mode 同首歌切軌) — resume
   if (bgAudio.src && bgAudio.src.endsWith(srcFile)) {
-    // src 沒變 (change_audio_mode 同首歌切軌) — resume
     console.log('[bgAudio] 同 src,只 resume');
     if (bgAudio.paused) bgAudio.play().then(() => {
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }).catch((e) => console.warn('[bgAudio] resume 失敗:', e));
     return;
   }
+
+  // [A+ 修法 (b)] 取消上一輪的 canplay/loadeddata listener,避免 race 雙重 play()
+  if (_bgAudioLoadAbort) {
+    _bgAudioLoadAbort.abort();
+  }
+  _bgAudioLoadAbort = new AbortController();
+  const signal = _bgAudioLoadAbort.signal;
+
+  // [A+ 修法 (a)] 同一個 <audio> instance,只 swap src — 不要 removeAttribute + load()
+  // iOS 對「同 element swap src」比「新 element」寬容,且 audio session 不會被打斷
   bgAudio.src = src;
   bgAudio.loop = false;
-  // 不要先設 currentTime=0 — 設了會干擾 iOS 的 internal buffering
+
   let started = false;
   const tryStart = (why) => {
+    if (signal.aborted) return;
     if (started) return;
     started = true;
     console.log('[bgAudio] tryStart 因為', why);
@@ -800,10 +852,14 @@ function playBgAudio(song) {
       console.log('[bgAudio] play() 成功, paused=', bgAudio.paused, 'currentTime=', bgAudio.currentTime);
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
       logAudioRuntime('playback-started', { currentTime: bgAudio.currentTime });
-    }).catch((err) => console.warn('[bgAudio] play 失敗：', err.name, err.message));
+    }).catch((err) => {
+      console.warn('[bgAudio] play 失敗：', err.name, err.message, '— 若是 NotAllowedError 等下次 visibilitychange');
+      // 失敗也先別 retry,留給 visibilitychange listener 接手 (常見 iOS 行為)
+      _pendingBgAudioPlay = { song, src, srcFile };
+    });
   };
-  bgAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true });
-  bgAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true });
+  bgAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true, signal });
+  bgAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true, signal });
   // cached m4a 不會觸發 canplay → 1.5s 後主動試
   setTimeout(() => tryStart('1500ms-timeout'), 1500);
   logAudioRuntime('playBgAudio-queued', { src, audioCurrentTrack, audioMode });
