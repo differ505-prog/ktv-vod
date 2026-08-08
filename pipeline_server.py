@@ -339,9 +339,13 @@ def _pwa_backfill_worker():
     skipped = 0
     failed = 0
     for mp4 in candidates:
+        # 与 mp4 對齊: 「<name>_ktv.mp4」與「<name>_ktv.m4a」
+        # 早期版本是「<name>.m4a」(沒 _ktv),會跟 brain 期望的 _ktv 對不上
+        # 2026-08-09 migration 把 59 首歌從「無 _ktv」搬到「有 _ktv」的位置,
+        # 從此 backfill 必須寫「有 _ktv」格式才能 idempotent (避免重複建立)。
         name = _sanitized_name_from_ktv_mp4(mp4)
-        out_orig = audio_dir / f"{name}.m4a"
-        out_voc = audio_dir / f"{name}-vocal-off.m4a"
+        out_orig = audio_dir / f"{name}_ktv.m4a"
+        out_voc = audio_dir / f"{name}_ktv-vocal-off.m4a"
         if out_orig.exists() and out_voc.exists():
             skipped += 1
             continue

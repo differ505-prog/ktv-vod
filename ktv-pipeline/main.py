@@ -700,13 +700,20 @@ def stage_extract_pwa_audio(
     階段 4：PWA 背景音訊抽取 (iOS PWA 鎖屏播放用)
 
     從已編碼的 mp4 (L=伴奏, R=人聲, stereo) 抽出兩條 mono m4a:
-      - <sanitized_name>.m4a            = L+R mixed → mono (原唱)
-      - <sanitized_name>-vocal-off.m4a  = L only → mono (伴奏)
+      - <sanitized_name>_ktv.m4a            = L+R mixed → mono (原唱)
+      - <sanitized_name>_ktv-vocal-off.m4a  = L only → mono (伴奏)
 
     為什麼需要 .m4a?
       iOS Safari 的 <audio> element 不吃 mp4 container 裡的 AAC,
       所以 audio-mode 即使加 MediaSession 也會回「格式不支援」而黑畫。
       預先抽成 .m4a (AAC in MP4, audio-only) 才能在 iOS PWA 鎖屏播。
+
+    檔名後綴 `_ktv` 跟 mp4 對齊 (見 stage_mix_and_encode)。
+    一開始 (sanitized_name 已經是沒 _ktv) → 這裡補 `_ktv` 後綴寫檔。
+    這跟 pipeline_server.py 的 _pwa_backfill_worker 必須一致,
+    否則 brain 永遠找不到 audio (2026-08-09 修過 59 首歌錯位 bug 後定下)。
+    2026-08-09 之前 audio 檔名 <sanitized_name>.m4a (沒 _ktv),
+    跟 mp4 (<sanitized_name>_ktv.mp4) 對不上,腦以為 audio 沒抽。
 
     輸出位置: output_dir/../audio/ (與 mp4 同層,例如 processed → ../audio)
     """
@@ -714,8 +721,9 @@ def stage_extract_pwa_audio(
     audio_dir = output_dir.parent / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    out_orig = audio_dir / f"{sanitized_name}.m4a"
-    out_voc = audio_dir / f"{sanitized_name}-vocal-off.m4a"
+    # 與 mp4 (line 524: f"{sanitized_name}_ktv.mp4") 對齊
+    out_orig = audio_dir / f"{sanitized_name}_ktv.m4a"
+    out_voc = audio_dir / f"{sanitized_name}_ktv-vocal-off.m4a"
 
     # idempotent: 兩個檔案都已存在 → 跳過
     if out_orig.exists() and out_voc.exists():
