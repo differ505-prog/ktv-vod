@@ -1,0 +1,8 @@
+{
+  "_comment": "中央 Tailscale Funnel 清單。所有專案共用同一份。修改後 funnel_manager.sh 會自動重建全部 tunnel，避免各專案 watchdog 互踩。",
+  "_format": "port:target_url",
+  "funnels": [
+    { "port": 443,   "target": "http://localhost:3001", "owner": "ktv-vod",     "url": "https://vibe-nas.taila67710.ts.net/tv.html" },
+    { "port": 10000, "target": "http://localhost:8081", "owner": "worldmonitor", "url": "https://vibe-nas.taila67710.ts.net:10000/" }
+  ]
+}

@@ -1,39 +1,32 @@
 #!/usr/bin/env bash
 # =========================================================
-# Funnel watchdog — 確保 https://vibe-nas.taila67710.ts.net/tv.html 與 mobile.html
-# 跟 worldmonitor 對外都活著。掛了自動重設。
+# Funnel watchdog — 確保 https://vibe-nas.taila67710.ts.net/ 對外活著
 #
 # 用法:
 #   安裝: bash ktv-pipeline/install_funnel_watchdog.sh
 #   卸載: bash ktv-pipeline/install_funnel_watchdog.sh --remove
 #   立即跑一次: systemctl start funnel-watchdog.service
 #   看狀態: systemctl status funnel-watchdog.timer
-#   看 log:   journalctl -u funnel-watchdog.service -n 50
+#   看 log:   tail -f /var/log/funnel-watchdog.log
 #
-# 設計 (2026-08-07):
-#   - 對外服務:
-#       port 443   → http://localhost:3001   (KTV 主站, port 鎖死 3001)
-#       port 10000 → http://localhost:8081   (worldmonitor)
-#   - 檢查: 公開 HTTPS + 本地 3001
-#   - 修復: tailscale serve reset → 重新加 2 條 funnel
-#   - 通知: 寫 /var/log/funnel-watchdog.log 帶時間戳
+# 設計 (2026-08-08 修憲):
+#   - 中央 funnel_manager.sh 持有 reset 權限（用 flock /var/run/funnel-manager.lock 互斥）
+#   - watchdog 只負責「KTV 自己掛了嗎」檢查；要不要 reset 由 manager 內部搶 lock 決定
+#   - 這樣避免和 worldmonitor / 任何其他專案的 watchdog 互踩 reset
+#   - manifest: ktv-pipeline/funnel_manifest.json
 #   - 頻率: 每 5 分鐘 (systemd timer)
 # =========================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANAGER="${SCRIPT_DIR}/funnel_manager.sh"
 LOG_FILE="/var/log/funnel-watchdog.log"
-EXPECTED_FUNNELS=(
-    "443:http://localhost:3001"
-    "10000:http://localhost:8081"
-)
-CHECK_URLS=(
+
+KTV_URLS=(
     "https://vibe-nas.taila67710.ts.net/tv.html"
     "https://vibe-nas.taila67710.ts.net/mobile.html"
 )
-LOCAL_URLS=(
-    "http://localhost:3001/tv.html"
-    "http://localhost:3001/mobile.html"
-)
+KTV_LOCAL="http://localhost:3001/tv.html"
 
 log() {
     local ts
@@ -41,60 +34,36 @@ log() {
     echo "[$ts] $*" | tee -a "$LOG_FILE" >&2
 }
 
-check() {
+check_ktv() {
     local rc=0
-    for url in "${CHECK_URLS[@]}"; do
+    for url in "${KTV_URLS[@]}"; do
         local code
-        code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$url" || echo "000")"
+        code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$url" || echo 000)"
         if [[ "$code" != "200" ]]; then
             log "FAIL: $url -> $code"
             rc=1
         fi
     done
-    for url in "${LOCAL_URLS[@]}"; do
-        local code
-        code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "$url" || echo "000")"
-        if [[ "$code" != "200" ]]; then
-            log "FAIL(local): $url -> $code"
-            rc=1
-        fi
-    done
-    return "$rc"
+    local lcode
+    lcode="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "$KTV_LOCAL" || echo 000)"
+    if [[ "$lcode" != "200" ]]; then
+        log "FAIL(local): $KTV_LOCAL -> $lcode"
+        rc=1
+    fi
+    return $rc
 }
 
-repair() {
-    log "REPAIR: tailscale serve reset + 重新設定 Funnel"
-    if echo "05050505" | sudo -S tailscale set --operator="$(whoami)" 2>/dev/null; then
-        log "  operator 設定完成"
-    fi
-    # 把所有 reset / add 的 stdout/stderr 都進 log (原本會被 || true 吞掉)
-    {
-        echo "05050505" | sudo -S tailscale serve reset 2>&1
-        echo "05050505" | sudo -S tailscale funnel reset 2>&1
-    } | sed "s/^/  /" | tee -a "$LOG_FILE" || true
-    for spec in "${EXPECTED_FUNNELS[@]}"; do
-        local port="${spec%%:*}"
-        local target="${spec##*:}"
-        log "  add: --https=${port} -> ${target}"
-        if echo "05050505" | sudo -S tailscale funnel --bg --https="${port}" "${target}" 2>&1 \
-            | sed "s/^/    /" | tee -a "$LOG_FILE"; then
-            log "  add OK: ${port} -> ${target}"
-        else
-            log "  add FAILED: ${port} -> ${target} (rc=$?)"
-        fi
-    done
-    sleep 5
-    if check; then
-        log "REPAIR OK: 全部回 200"
-    else
-        log "REPAIR FAILED: 修完仍然掛, 請手動看 tailscale funnel status"
-    fi
-}
-
-log "=== check 開始 ==="
-if check; then
-    log "OK: 全部 200"
+log "=== KTV watchdog check 開始 ==="
+if check_ktv; then
+    log "OK: KTV 全部 200"
     exit 0
 fi
-log "KO: 有項目掛了, 進入 repair"
-repair
+log "KO: KTV 有項目掛了, 委派 funnel_manager.sh (內部 flock 互斥)"
+"$MANAGER" --rebuild 2>&1 | sed 's/^/  mgr: /' | tee -a "$LOG_FILE"
+
+sleep 5
+if check_ktv; then
+    log "POST-CHECK OK: KTV 補回 200"
+else
+    log "POST-CHECK FAIL: KTV 仍掛, 等下個週期 (5 分鐘)"
+fi
