@@ -31,6 +31,10 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || '*').split(',').map((s) => s.tri
 const VIDEO_DIR = process.env.VIDEO_DIR || path.join(__dirname, 'videos');
 const VIDEO_URL_PREFIX = process.env.VIDEO_URL_PREFIX || '/videos';
 const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
+// 2026-08-09: Funnel 統一入口走 nginx /ktv/* 路徑分流,server 吐給前端的 URL 必須
+//   帶 /ktv/ 前綴,否則 nginx 視為非 /ktv/ 路徑會轉給 FlowSight (404)。
+//   部署在 :3001 直連時設 '' (預設),走 Funnel 時設 '/ktv'。
+const PUBLIC_PATH_PREFIX = (process.env.PUBLIC_PATH_PREFIX || '').replace(/\/+$/, '');
 
 // ===== PWA 背景音訊 =====
 // iOS Safari <audio> 不吃 mp4 container 裡的 AAC,所以預先抽成 .m4a
@@ -39,7 +43,7 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '';
 // 兩個變體:audio-original = 原唱 (L+R mixed mono), audio-vocal-off = 純伴奏 (L only mono)。
 // 由 ktv-pipeline/pwa_audio.py 抽出,放 NAS 的同一個 processed 目錄下的 audio 子目錄。
 const AUDIO_DIR = process.env.AUDIO_DIR || path.join(path.dirname(VIDEO_DIR), 'audio');
-const AUDIO_URL_PREFIX = '/audio';
+const AUDIO_URL_PREFIX = `${PUBLIC_PATH_PREFIX}/audio`;
 
 // ===== 歌曲編輯持久化 =====
 // 為什麼要持久化:  SONG_LIBRARY 純在記憶體,brain 重啟就清空。
@@ -217,6 +221,8 @@ app.use((req, res, next) => {
 }, express.static(path.join(__dirname, 'public')));
 
 // 影片檔案靜態託管 (支援 range request, 適合大型 mp4 串流)
+// app.use() 綁的是「container 內部」路徑,nginx proxy 已經把 /ktv/ 前綴 rewrite 掉了,
+//   所以這裡用原始 VIDEO_URL_PREFIX (/videos),不要套 PUBLIC_PATH_PREFIX。
 app.use(
   VIDEO_URL_PREFIX,
   express.static(VIDEO_DIR, {
@@ -234,8 +240,9 @@ app.use(
 );
 
 // PWA 背景音訊 (預先抽好的 .m4a,iOS PWA 鎖屏播放用)
+// app.use() 綁內部路徑,不套 PUBLIC_PATH_PREFIX (理由見上方 videos 區塊)。
 app.use(
-  AUDIO_URL_PREFIX,
+  '/audio',
   express.static(AUDIO_DIR, {
     fallthrough: true,
     index: false,
@@ -393,10 +400,13 @@ function getLocalIp() {
 function toPublicUrl(src) {
   if (!src) return src;
   if (/^https?:\/\//i.test(src)) return src; // 已是絕對 URL
-  // 已是 /videos/... 形式就不動
+  // 已是 /videos/... 或 /ktv/videos/... 形式就不動 (避免 prefix 重複套)
+  // 例: PUBLIC_PATH_PREFIX=/ktv → VIDEO_URL_PREFIX 套完後是 /ktv/videos,這裡要認得
   if (src.startsWith(VIDEO_URL_PREFIX)) return src;
-  // 否則補上 prefix
-  return VIDEO_URL_PREFIX + (src.startsWith('/') ? src : '/' + src);
+  if (PUBLIC_PATH_PREFIX && src.startsWith(`${PUBLIC_PATH_PREFIX}${VIDEO_URL_PREFIX}`)) return src;
+  // 套上 PUBLIC_PATH_PREFIX (Funnel nginx 路徑分流需要)
+  const prefixed = PUBLIC_PATH_PREFIX + VIDEO_URL_PREFIX + (src.startsWith('/') ? src : '/' + src);
+  return prefixed;
 }
 
 // ===== 歌曲庫載入 =====
