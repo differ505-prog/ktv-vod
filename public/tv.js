@@ -240,7 +240,9 @@ function initAudioGraph() {
   let currentAudioMode = 'original'; // 從 server 廣播過來的最新 audio mode (original/vocal_off)
 
   // ===== Socket.io 連線 =====
-  const socket = io({ reconnection: true });
+  // 2026-08-09: Funnel 統一入口走 nginx /ktv/* 路徑分流,socket.io 必須配 path 前綴
+  //   否則會被 proxy 轉去 FlowSight (port 8888) → 卡拉ok server 收不到 play_song / library_updated
+  const socket = io({ path: '/ktv/socket.io', reconnection: true });
 
   socket.on('connect', () => {
     console.log('[Socket] 已連線', socket.id);

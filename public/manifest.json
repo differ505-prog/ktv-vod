@@ -4,7 +4,7 @@
   "description": "手機點歌、電視播放。支援音樂模式背景播放。",
   "start_url": "/tv.html?mode=audio",
   "scope": "/",
-  "display": "minimal-ui",
+  "display": "standalone",
   "orientation": "any",
   "background_color": "#05050a",
   "theme_color": "#ec4899",

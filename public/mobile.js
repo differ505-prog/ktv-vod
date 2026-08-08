@@ -136,7 +136,10 @@
   // 對外網 (Tailscale Funnel / 反代) 友善:
   //   - 先 polling 確認管道通暢, 再 upgrade WebSocket
   //   - reconnection + reconnectionAttempts 上限,避免手機休眠時狂重連塞 server
+  // 2026-08-09: Funnel 統一入口走 nginx /ktv/* 路徑分流,socket.io 必須配 path 前綴
+  //   否則會被 proxy 轉去 FlowSight (port 8888) → 卡拉ok server 收不到 add_song ack
   const socket = io({
+    path: '/ktv/socket.io',
     transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
