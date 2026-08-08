@@ -29,21 +29,41 @@
     bgAudio?.addEventListener(event, () => logAudioRuntime(event));
   });
   document.addEventListener('visibilitychange', () => logAudioRuntime('visibilitychange'));
-// [A+ 9.5 分修法] PWA 從背景回到前景時,撿回被 iOS 暫停的 audio / 補做延遲的切歌
+// [V2 9 分修法] 修正 audio-mode 在背景被 iOS pause 後的「盲目復活舊歌」bug
+//   - 舊邏輯 (ad9db55): 前景 visibility 進場時,只要 bgAudio paused → 直接 bgAudio.play()
+//     這是錯的:iOS 自動 pause ≠ user 想停,直接 play 會從中斷的 currentTime 殘留播舊歌
+//   - 新邏輯: 進前景時,不要盲目 play。改成:
+//     (a) 有 pending 新歌 → 真的走切歌路徑 (A+ 修法 (c))
+//     (b) 沒 pending 但 bgAudio paused → 用 server 廣播時附的 updatedAt 對齊 currentTime
+//         (server emit play_song 已附 updatedAt,SyncState 也會帶) 再 play
+let _currentSongStartedAt = 0; // server 端 play_song 時的 timestamp (ms)
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  // 1) 補做延遲的 src swap + play
+  // (a) 補做延遲的 src swap + play
   if (_pendingBgAudioPlay) {
     console.log('[bgAudio] visibilitychange → 執行延遲的 playBgAudio');
     const pending = _pendingBgAudioPlay;
     _pendingBgAudioPlay = null;
-    // 重新進場會走正常的「同 src 略過 / 不同 src swap」邏輯
     playBgAudio(pending.song);
     return;
   }
-  // 2) 沒 pending 但 audio 該在播卻 paused → 強 resume (iOS 鎖屏後常見)
+  // (b) 沒 pending 但 audio 該在播卻 paused → 用 server 時間軸對齊, 不要盲目復活
+  //     (iOS PWA 進背景時會主動 pause,這不是 user 想停)
   if (audioMode && bgAudio.paused && bgAudio.src) {
-    console.log('[bgAudio] visibilitychange → resume paused audio');
+    const elapsedMs = _currentSongStartedAt ? (Date.now() - _currentSongStartedAt) : 0;
+    const expectedTime = elapsedMs / 1000;
+    // 如果 server 對齊點已經超過這首歌長度 → 跳下一首
+    if (bgAudio.duration && expectedTime >= bgAudio.duration) {
+      console.log('[bgAudio] visibilitychange → 對齊點已過 duration, 跳下一首');
+      socket.emit('song_ended');
+      return;
+    }
+    console.log('[bgAudio] visibilitychange → 對齊 currentTime=', expectedTime.toFixed(1), 's (不再盲目復活)');
+    try {
+      bgAudio.currentTime = expectedTime;
+    } catch (e) {
+      console.warn('[bgAudio] 對齊 currentTime 失敗:', e);
+    }
     bgAudio.play().then(() => {
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }).catch((e) => console.warn('[bgAudio] visibility-resume 失敗:', e));
@@ -284,6 +304,8 @@ function initAudioGraph() {
       currentAudioMode = state.audioMode;
     }
     if (state.currentSong) {
+      // [V2] sync_state 在 connect 時也會帶,用 serverTime 對齊時間軸
+      _currentSongStartedAt = state.serverTime || Date.now();
       playSong(enrichSong(state.currentSong));
     }
   });
@@ -300,8 +322,10 @@ function initAudioGraph() {
   }
 
   // 播放指令
-  socket.on('play_song', ({ currentSong }) => {
+  socket.on('play_song', ({ currentSong, updatedAt }) => {
     console.log('[Socket] 播放：', currentSong);
+    // [V2] server emit play_song 時附 updatedAt,記下來供 visibility 對齊用
+    if (updatedAt) _currentSongStartedAt = updatedAt;
     playSong(enrichSong(currentSong));
   });
 
@@ -698,6 +722,38 @@ if (document.body.classList.contains('immersive') && immersiveQrCode && !immersi
 //   (b) 用 AbortController 取消上一輪的 canplay/loadeddata 監聽,避免 race
 //   (c) document.hidden 時不直接 src swap,延遲到 visibilitychange 進 foreground
 //       → 那時 user 已經「回到」app,iOS 給的 grace period 內可正常 play()
+//
+// [V2 9 分修法] iOS PWA 進背景時 <audio> 會被 auto-pause 的根因:
+//   預設 HTMLAudioElement 拿到的 audio session category 是「ambient」,iOS 視為非必要背景音訊
+//   修法: 在 user gesture 內把 audioSessionType 設為 'playback',iOS 就會把它當媒體類別,允許背景繼續播
+//       注意: 'audioSessionType' 是非標準但 iOS 13+ Safari 支援的屬性,WebKit 私有 API
+let _audioSessionLocked = false;
+function lockAudioSessionForBackground() {
+  if (_audioSessionLocked) return;
+  if (!bgAudio) return;
+  try {
+    // iOS WebKit: 把 audio element 標記為媒體類別,iOS 才會在背景繼續播
+    if ('audioSessionType' in bgAudio) {
+      bgAudio.audioSessionType = 'playback';
+    }
+    // 同時確保 MediaSession metadata 是非空,告訴 iOS 這是合法媒體
+    if ('mediaSession' in navigator && !navigator.mediaSession.metadata) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'KTV 音樂模式',
+        artist: '背景播放中',
+        album: 'CouchMic'
+      });
+    }
+    _audioSessionLocked = true;
+    console.log('[bgAudio] audio session 已鎖為 playback (iOS 背景播放關鍵)');
+  } catch (e) {
+    console.warn('[bgAudio] 鎖 audio session 失敗:', e);
+  }
+}
+// 第一次 user gesture (click / touchstart / keydown) 內鎖
+['click', 'touchstart', 'keydown'].forEach((evt) => {
+  window.addEventListener(evt, lockAudioSessionForBackground, { once: true, capture: true });
+});
 
 if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('play', () => bgAudio.play().catch(() => {}));

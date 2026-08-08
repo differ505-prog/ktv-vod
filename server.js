@@ -1242,6 +1242,7 @@ io.on('connection', (socket) => {
     audioMode,
     songHistory: [...songHistory],
     tvSyncOffset: TV_SYNC_OFFSET,
+    serverTime: Date.now(), // [V2] 給 tv.js 對齊 currentTime 用
   });
 
   socket.on('set_tv_sync_offset', (offset) => {
