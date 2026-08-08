@@ -44,7 +44,7 @@ info "部署腳本位於: $SCRIPT_DIR"
 # ============================================================
 # 參數
 # ============================================================
-NAS_HOST="${NAS_HOST:-vibe@192.168.31.47}"
+NAS_HOST="${NAS_HOST:-vibe@vibe-nas.taila67710.ts.net}"
 NAS_PORT="${NAS_PORT:-22}"
 CONTAINER_NAME="${1:-}"
 CONTAINER_APP_DIR="/app/ktv_pipeline"

@@ -18,7 +18,7 @@ info() { echo -e "${GREEN}[rollback]${NC} $*"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $*"; }
 err()  { echo -e "${RED}[error]${NC} $*" >&2; }
 
-NAS_HOST="${NAS_HOST:-vibe@192.168.31.47}"
+NAS_HOST="${NAS_HOST:-vibe@vibe-nas.taila67710.ts.net}"
 NAS_PORT="${NAS_PORT:-22}"
 CONTAINER_NAME="${1:-}"
 TS="${2:-}"

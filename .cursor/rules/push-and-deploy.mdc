@@ -42,9 +42,9 @@ ssh "${SSH_OPTS[@]}" "$NAS_HOST" \
 **public/ 部署流程**（`./public:/app/public:ro` 已啟用，rsync 到 host 容器直接讀到）：
 ```bash
 SSHPASS='05050505' rsync -avz \
-  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
   --checksum --exclude='.DS_Store' \
-  public/ vibe@192.168.31.47:/home/vibe/ktv-vod/public/
+  public/ vibe@vibe-nas.taila67710.ts.net:/home/vibe/ktv-vod/public/
 ```
 
 **例外**: 純本地測試 / 改 `*.md` / user 明示「先不要部署」
