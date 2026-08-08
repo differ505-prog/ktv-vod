@@ -180,11 +180,14 @@ Pipeline 會：
 
 | 項目 | 值 |
 | --- | --- |
-| SSH | `ssh vibe@192.168.31.47` |
+| SSH（家裡區網） | `ssh vibe@192.168.31.47` |
+| SSH（出門 / Tailscale） | `ssh vibe@vibe-nas` 或 `ssh vibe@100.72.78.110` |
 | 密碼 | `05050505` |
 | 專案根目錄 | `/home/vibe/ktv-vod/` |
 | `public/` 前端 | `/home/vibe/ktv-vod/public/` |
 | `ktv-data/` volume | `/home/vibe/ktv-vod/ktv-data/` |
+
+> **區網 vs Tailscale**：出門時 `192.168.31.47` 連不到（你不在家用 WiFi），改用 Tailscale magic DNS `vibe-nas` 或 IP `100.72.78.110`。兩者都行；magic DNS 比較好讀，IP 是 fallback。
 
 ### 對外服務 port
 
@@ -195,18 +198,40 @@ Pipeline 會：
 | Homepage | `homepage` | 3000 | **不是 KTV**，不要從 port 3000 點歌 |
 
 使用者入口：
-- 電視：`http://192.168.31.47:3001/tv.html`
-- 手機：`http://192.168.31.47:3001/mobile.html`
+- 電視（家裡）：`http://192.168.31.47:3001/tv.html`
+- 手機（家裡）：`http://192.168.31.47:3001/mobile.html`
+- 電視（出門）：`http://100.72.78.110:3001/tv.html`
+- 手機（出門）：`http://100.72.78.110:3001/mobile.html`
 
 ### 快速更新前端（`public/`，免重啟）
 
+**方法 A：自動 fallback（推薦）**
+
 ```bash
+bash scripts/deploy-public.sh               # 全部 public/
+bash scripts/deploy-public.sh public/tv.js  # 單檔
+```
+
+Script 會先試 `192.168.31.47`（家裡區網），連不上就 fallback 到 Tailscale `vibe-nas`。家裡 / 外面都不用改指令。
+
+**方法 B：手動指定 host**
+
+```bash
+# 家裡
 SSHPASS='05050505' rsync -avz \
   -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
   --checksum \
   --exclude='.DS_Store' \
   public/ \
   vibe@192.168.31.47:/home/vibe/ktv-vod/public/
+
+# 出門走 Tailscale
+SSHPASS='05050505' rsync -avz \
+  -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22' \
+  --checksum \
+  --exclude='.DS_Store' \
+  public/ \
+  vibe@vibe-nas:/home/vibe/ktv-vod/public/
 ```
 
 - `public/` 是用 volume mount 進容器的（`./public:/app/public:ro`），所以**毋需重啟任何服務**。
