@@ -90,9 +90,10 @@
   const jobs = new Map();
 
   // ===== 抓取歌曲庫 =====
+  // 相對路徑 (沒開頭 /) — 容忍 Tailscale Funnel 經 /ktv/ 前綴代理
   async function fetchSongs() {
     try {
-      const res = await fetch('/api/songs');
+      const res = await fetch('api/songs');
       const data = await res.json();
       if (data.success) {
         songs = data.songs;
@@ -387,7 +388,7 @@
       return;
     }
     // 把 PIN 送 server 驗證 (不用先做完所有事才驗)
-    fetch('/api/songs/host-verify', {
+    fetch('api/songs/host-verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hostPin: pin }),
@@ -428,7 +429,7 @@
     deleteConfirm.disabled = true;
     deleteConfirm.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 搬移中...';
     try {
-      const res = await fetch('/api/songs/delete', {
+      const res = await fetch('api/songs/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ songId, hostPin: pin }),
@@ -460,7 +461,7 @@
     trashModal.classList.remove('hidden');
     trashList.innerHTML = '<div class="text-center text-gray-500 text-sm py-6">載入中...</div>';
     try {
-      const res = await fetch('/api/songs/trash');
+      const res = await fetch('api/songs/trash');
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       renderTrash(data.items);
@@ -497,7 +498,7 @@
         li.querySelector('.restore-btn').disabled = true;
         li.querySelector('.restore-btn').innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
         try {
-          const res = await fetch('/api/songs/restore', {
+          const res = await fetch('api/songs/restore', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fileName: it.fileName, hostPin: pin }),
@@ -811,7 +812,7 @@ function attachQueueCardGestures(li, song, idx) {
 
 async function removeFromQueue(position, song) {
   try {
-    const res = await fetch('/api/songs/remove-from-queue', {
+    const res = await fetch('api/songs/remove-from-queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position }),
@@ -898,7 +899,7 @@ async function confirmFixArtist() {
   const key = newArtist; // 白名單 key = 顯示名
   const displayName = newArtist;
   try {
-    const res = await fetch('/api/artists', {
+      const res = await fetch('api/artists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, displayName }),
@@ -1347,7 +1348,7 @@ function attachLibraryCardLongPress(li, song) {
     btnSubmitSong.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 送出中...';
 
     try {
-      const res = await fetch('/api/process-youtube', {
+      const res = await fetch('api/process-youtube', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1415,7 +1416,7 @@ function attachLibraryCardLongPress(li, song) {
       [...jobs.entries()].map(async ([jobId, job]) => {
         if (job.status === 'done' || job.status === 'error') return;
         try {
-          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+          const res = await fetch(`api/jobs/${encodeURIComponent(jobId)}`);
           const data = await res.json();
           if (data && data.status) {
             job.status = data.status;
@@ -1439,7 +1440,7 @@ function attachLibraryCardLongPress(li, song) {
 
     // 2) 問 brain 磁碟階段 (給「下載中 / AI 分離中 / 混音中」文字反饋)
     try {
-      const res = await fetch('/api/work-progress');
+      const res = await fetch('api/work-progress');
       const data = await res.json();
       if (data && data.stage && data.stage !== 'idle' && data.stage !== 'unknown') {
         // 把進度套到仍在跑的第一個 job (單執行緒 pipeline, 同時只一個)
@@ -1476,8 +1477,8 @@ function attachLibraryCardLongPress(li, song) {
     delete job._cleanupAt;
     (async () => {
       try {
-        const res = await fetch('/api/process-youtube', {
-          method: 'POST',
+          const res = await fetch('api/process-youtube', {
+            method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: job.url,
@@ -1635,7 +1636,7 @@ function attachLibraryCardLongPress(li, song) {
   }
 
   function loadArtistList() {
-    fetch('/api/artists')
+    fetch('api/artists')
       .then(r => r.json())
       .then(d => {
         artistData = d.artists || {};
@@ -1674,7 +1675,7 @@ function attachLibraryCardLongPress(li, song) {
     const key = document.getElementById('inputArtistKey').value.trim();
     const display = document.getElementById('inputArtistDisplay').value.trim();
     if (!key || !display) { showToast('請填寫 key 與顯示名'); return; }
-    fetch('/api/artists', {
+    fetch('api/artists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, displayName: display }),
@@ -1698,7 +1699,7 @@ function attachLibraryCardLongPress(li, song) {
     if (!btn) return;
     const key = btn.dataset.key;
     if (!confirm(`確定移除「${artistData[key] || key}」？`)) return;
-    fetch(`/api/artists/${encodeURIComponent(key)}`, { method: 'DELETE' })
+    fetch(`api/artists/${encodeURIComponent(key)}`, { method: 'DELETE' })
       .then(r => r.json())
       .then(d => {
         if (d.success) { showToast('已移除'); loadArtistList(); }

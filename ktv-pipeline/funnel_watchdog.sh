@@ -67,14 +67,21 @@ repair() {
     if echo "05050505" | sudo -S tailscale set --operator="$(whoami)" 2>/dev/null; then
         log "  operator 設定完成"
     fi
-    echo "05050505" | sudo -S tailscale serve reset 2>&1 | sed "s/^/  /" | tee -a "$LOG_FILE" || true
-    echo "05050505" | sudo -S tailscale funnel reset 2>&1 | sed "s/^/  /" | tee -a "$LOG_FILE" || true
+    # 把所有 reset / add 的 stdout/stderr 都進 log (原本會被 || true 吞掉)
+    {
+        echo "05050505" | sudo -S tailscale serve reset 2>&1
+        echo "05050505" | sudo -S tailscale funnel reset 2>&1
+    } | sed "s/^/  /" | tee -a "$LOG_FILE" || true
     for spec in "${EXPECTED_FUNNELS[@]}"; do
         local port="${spec%%:*}"
         local target="${spec##*:}"
         log "  add: --https=${port} -> ${target}"
-        echo "05050505" | sudo -S tailscale funnel --bg --https="${port}" "${target}" 2>&1 \
-            | sed "s/^/    /" | tee -a "$LOG_FILE" || true
+        if echo "05050505" | sudo -S tailscale funnel --bg --https="${port}" "${target}" 2>&1 \
+            | sed "s/^/    /" | tee -a "$LOG_FILE"; then
+            log "  add OK: ${port} -> ${target}"
+        else
+            log "  add FAILED: ${port} -> ${target} (rc=$?)"
+        fi
     done
     sleep 5
     if check; then

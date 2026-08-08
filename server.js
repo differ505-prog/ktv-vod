@@ -174,6 +174,27 @@ function saveSyncConfig(offset) {
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
+// ===== Access log (診斷用,無敏感資料) =====
+// 記錄每個 request 的 method/path/status/duration,方便 debug
+// 「Funnel 又被代理到錯的 port」這類問題時,看 log 就知道有沒有真的進到這台。
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    // 只記 API/HTML/影片路徑,排除 socket.io 的輪詢 (太吵)
+    if (req.path.startsWith('/socket.io/')) return;
+    log('debug', 'http', {
+      m: req.method,
+      p: req.path,
+      s: res.statusCode,
+      ms,
+      ua: (req.headers['user-agent'] || '').slice(0, 40),
+      ip: (req.headers['x-forwarded-for'] || req.ip || '').slice(0, 40),
+    });
+  });
+  next();
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
