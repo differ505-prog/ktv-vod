@@ -25,9 +25,19 @@
     error: bgAudio?.error?.code || null,
   });
   const logAudioRuntime = (event, extra = {}) => console.log('[bgAudio:lifecycle]', event, { ...audioRuntime(), ...extra });
-  ['play', 'playing', 'pause', 'ended', 'error', 'stalled', 'waiting'].forEach((event) => {
-    bgAudio?.addEventListener(event, () => logAudioRuntime(event));
-  });
+
+  // ============================================================
+  // [V4 修法] on-screen debug logger — 完全不污染 unlock 流程
+  //   預設狀態:
+  //     - 沒有 🌟 圖示 (之前放右下角的 🐞 會被 iOS 視為蓋住 user gesture 區)
+  //     - 沒有 console.log override
+  //     - 沒有 setInterval
+  //   啟用方式: tv.html?debug=1  →  右下角才出現 🐞 圖示 (層級極低,不擋點擊)
+  // ============================================================
+  const __debugEnabled = new URLSearchParams(window.location.search).get('debug') === '1';
+  if (false && __debugEnabled) { // 暫時整個關閉,避免再次打壞 user gesture 流程
+  }
+  // TODO: 等音樂模式切歌根因抓出來後,改用 Safari Web Inspector remote debug,不靠 DOM overlay
   document.addEventListener('visibilitychange', () => logAudioRuntime('visibilitychange'));
 // [V2 9 分修法] 修正 audio-mode 在背景被 iOS pause 後的「盲目復活舊歌」bug
 //   - 舊邏輯 (ad9db55): 前景 visibility 進場時,只要 bgAudio paused → 直接 bgAudio.play()
@@ -39,12 +49,39 @@
 let _currentSongStartedAt = 0; // server 端 play_song 時的 timestamp (ms)
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  // (a) 補做延遲的 src swap + play
+  // (a) 補做 delayed 切歌:
+  //   - 舊 logic: 調用 playBgAudio(song) 內部又 swap src 一次 → 雙重 swap 會壞 iOS session
+  //   - 新 logic: 因為 playBgAudio 在 hidden 時已經悄悄 swap src + load() 了,
+  //     這裡只需要 player.play() 啟動(並設 currentTime=0 對齊「新歌從頭開始」)
   if (_pendingBgAudioPlay) {
-    console.log('[bgAudio] visibilitychange → 執行延遲的 playBgAudio');
+    console.log('[bgAudio] visibilitychange → 執行延遲的 play() (src 已在 hidden 時 swap 過)');
     const pending = _pendingBgAudioPlay;
     _pendingBgAudioPlay = null;
-    playBgAudio(pending.song);
+    // [2026-08-10 修法] src 校驗:iOS PWA 對 background 設 src 偶爾被忽略,
+    //   切回前景時 bgAudio.src 可能仍指向舊歌。若 pending.srcFile 跟當前 src
+    //   結尾不符 → 強制清空 src 後重新設,確保播的是新歌。
+    const srcMatches = bgAudio.src && bgAudio.src.endsWith(pending.srcFile);
+    if (!srcMatches) {
+      console.warn('[bgAudio] visibilitychange → bgAudio.src 跟 pending 不符, 強制重設 (src was:', bgAudio.src, 'expected:', pending.srcFile, ')');
+      try {
+        bgAudio.removeAttribute('src');
+        try { bgAudio.load(); } catch (_) {}
+      } catch (e) {}
+      bgAudio.src = pending.src;
+      bgAudio.loop = false;
+      try { bgAudio.load(); } catch (e) {}
+    }
+    try {
+      bgAudio.currentTime = 0;
+    } catch (e) {
+      console.warn('[bgAudio] 重置 currentTime 失敗:', e);
+    }
+    updateMediaSession(pending.song);
+    bgAudio.play().then(() => {
+      console.log('[bgAudio] 延遲 play() 成功, currentTime=', bgAudio.currentTime);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      logAudioRuntime('playback-started', { currentTime: bgAudio.currentTime });
+    }).catch((e) => console.warn('[bgAudio] 延遲 play() 失敗：', e.name, e.message));
     return;
   }
   // (b) 沒 pending 但 audio 該在播卻 paused → 用 server 時間軸對齊, 不要盲目復活
@@ -347,12 +384,21 @@ function initAudioGraph() {
     try { video.pause(); } catch (e) {}
     video.removeAttribute('src');
     video.load();
-    // audio-mode: 只 pause bgAudio,不解綁 src/不 load()
-    // → server 緊接著 emit play_song → playBgAudio 會重新設 src,避免破壞
-    //   iOS PWA 的 user-activation credit (切下一首 src 立刻 play() 才不會被拒)。
+    // audio-mode: 2026-08-10 修法 — 不再只 pause,直接 removeAttribute('src') + load()
+    // 清空舊 src。這是 iOS PWA 背景切歌的根因:
+    //   舊版只 pause → bgAudio.src 仍是舊歌 → 接著 play_song 走 hidden 分支
+    //   設 bgAudio.src = newSrc,在 iOS 對 paused audio 的 background 變更常被忽略
+    //   → usr 切回 TV 才發現播的是舊歌
+    // 新版: stop_song 先清空 src → play_song hidden 分支從「無 src」開始設新 src,
+    //   iOS 對「src 從空變有」會真實生效,並觸發 load metadata → canplay
     // 非 audio-mode: bgAudio 沒在用,可以真的 stopBgAudio() 釋放
     if (audioMode) {
       try { bgAudio.pause(); } catch (e) {}
+      try {
+        bgAudio.removeAttribute('src');
+        bgAudio.load();
+      } catch (e) {}
+      _pendingBgAudioPlay = null; // 切歌就把 pending 洗掉,避免 race
     } else {
       stopBgAudio();
     }
@@ -867,16 +913,43 @@ function playBgAudio(song) {
   }
   const srcFile = src.split('/').pop();
 
-  // [A+ 修法 (c)] document.hidden 時不要直接 swap src + play — iOS 會拒。
-  // 改成「延遲到 visibilitychange 進 foreground」,在 user 回到 app 那刻一口氣做掉。
+  // [A+ 修法 (c)] document.hidden 時: 先 swap src + load() 進背景 cache,
+  //   等 visibilitychange 進 foreground 才 play()。
+  // 舊版只 set _pendingBgAudioPlay 不換 src → 鎖屏換歌永遠無聲(因為舊 src 還在)，
+  //   直到 user 解鎖才能聽。要先把下一首 audio 真的載進 element,
+  //   visibilitychange 時才補 play()。
+  // 注: 因為 audioSessionType='playback' 已經在第一次 user gesture 內鎖定,
+  //   iOS 已視為 media category,swap src + load() 即使在 background 也不會被拒。
+  //
+  // [2026-08-10 修法] iOS PWA 背景切歌 src 沒換 root cause:
+  //   若 bgAudio 暫停時 src 已有值,iOS 對 background 設 src 等同 no-op,
+  //   直到 element 重新 load() 過才會生效。
+  //   解法: 若目前 src 跟 new src 不同,先 removeAttribute('src') + load() 清空,
+  //   再設 new src + load()。這個「src 從空變有」的變動 iOS 一定會執行。
   if (document.hidden) {
-    console.log('[bgAudio] PWA 隱藏中,延遲 src swap 到 visibilitychange');
+    const sameSrc = bgAudio.src && bgAudio.src.endsWith(srcFile);
+    if (!sameSrc) {
+      console.log('[bgAudio] PWA 隱藏中, 先清空 src 再設新 src (避免 iOS 對 paused src 變更 no-op)');
+      try {
+        bgAudio.removeAttribute('src');
+        try { bgAudio.load(); } catch (_) {}
+      } catch (e) {}
+      bgAudio.src = src;
+      bgAudio.loop = false;
+      try { bgAudio.load(); } catch (e) { /* iOS 偶爾對 bgAudio.load() 拋 InvalidStateError, 不致命 */ }
+    } else {
+      console.log('[bgAudio] PWA 隱藏中, 同 src 不重複設');
+    }
     _pendingBgAudioPlay = { song, src, srcFile };
     return;
   }
 
   // 同 src (change_audio_mode 同首歌切軌) — resume
-  if (bgAudio.src && bgAudio.src.endsWith(srcFile)) {
+  // [2026-08-10] src 結尾比對只防「音軌切換」場景,change_audio_mode 切換時
+  //   audioCurrentTrack 會變, srcFile 才會跟 bgAudio.src 結尾相符。
+  //   切歌時 srcFile 跟 src 完整路徑尾部比對, bgAudio.src 是舊歌完整路徑
+  //   自然不會 endsWith → 走下方換 src 路徑。
+  if (bgAudio.src && bgAudio.src.endsWith(srcFile) && !_pendingBgAudioPlay) {
     console.log('[bgAudio] 同 src,只 resume');
     if (bgAudio.paused) bgAudio.play().then(() => {
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
