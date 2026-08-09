@@ -83,6 +83,25 @@ let _currentSongStartedAt = 0; // server 端 play_song 時的 timestamp (ms)
 //   2. 如果有 pending (前景 sync play 失敗留下來的 fallback) → 補做 play
 //   3. 如果 audio 該在播卻 paused → 對齊 server 時間軸再 resume
 document.addEventListener('visibilitychange', () => {
+  // [E 方案] 進背景瞬間:確保 active audio 100% buffered
+  //   iOS bg 後只允許已 buffered 部分播完,streaming 會被切
+  //   JS 在 bg 仍可執行 5-10s grace window,趁這時把 active 拉到 canplaythrough
+  if (document.hidden && audioMode && activeAudio && activeAudio.src) {
+    const src = activeAudio.src;
+    console.log('[bgAudio] 進背景,主動確保 100% buffered:', src.split('/').pop());
+    // 不 await (返回時 JS 可能已凍結),丟 background promise 跑就好
+    preloadFullTrack(activeAudio, src, 8000).then((ok) => {
+      console.log('[bgAudio] bg preload 結果:', ok ? 'OK 100%' : 'PARTIAL (grace window 不夠)');
+    });
+    // 順便也預載下一首到 inactive
+    if (typeof nextSong !== 'undefined' && nextSong) {
+      const nextSrc = getAudioModeSrc(nextSong, audioCurrentTrack);
+      if (nextSrc) {
+        bindAudioToGraph(inactiveAudio);
+        preloadFullTrack(inactiveAudio, nextSrc, 8000).catch(() => {});
+      }
+    }
+  }
   if (document.hidden) return;
   // [B' 修法] 回前台 → 重接 graph + 重設 gain
   unbypassAudioGraph();
@@ -1073,6 +1092,12 @@ function playBgAudio(song) {
     // [B' 修法] 背景 → Web Audio graph bypass (聲音不再走 accGain/vocGain,確保有聲)
     bypassAudioGraph();
 
+    // [E 方案] bg 進入瞬間:確保 active 100% buffered
+    //   iOS bg 期間只允許「已 buffered」播完,因此進 bg 前若還在 streaming 必斷
+    //   這裡呼叫 preloadFullTrack 同步等到 canplaythrough 才走下一步 play()
+    //   注:JS 在 bg 後不會凍結,但 setTimeout/Promise 都還會跑 (直到 system suspend)
+    //   所以同步等 canplaythrough 在 bg 仍可執行幾秒,iOS 給的 grace window 約 5-10s
+
     // 取消上一輪 listener
     if (_bgAudioLoadAbort) _bgAudioLoadAbort.abort();
     _bgAudioLoadAbort = new AbortController();
@@ -1152,6 +1177,26 @@ function playBgAudio(song) {
   } catch (e) {}
   inactiveAudio.preload = 'auto';
 
+  // [E 方案] 預緩衝 active + 下一首:
+  //   - active:等 canplaythrough 確保 100% buffered (背景不會被切)
+  //   - inactive:同時預載下一首 (若有 playlist 知道下一首)
+  //   - 不 await 整個,避免首播延遲:丟背景跑,console 可觀察
+  preloadFullTrack(activeAudio, src, 30000).then((ok) => {
+    if (ok) console.log('[bgAudio] active 100% buffered 完成,bg 期間可完整播完');
+    else console.warn('[bgAudio] active 未達 100% buffered,bg 期間可能在末端中斷');
+  });
+
+  // 預載下一首進 inactive (使用 socket 推播的 nextSong 全域變數)
+  if (typeof nextSong !== 'undefined' && nextSong) {
+    const nextSrc = getAudioModeSrc(nextSong, audioCurrentTrack);
+    if (nextSrc) {
+      bindAudioToGraph(inactiveAudio); // 確保 inactive 也在 graph 上 (Safari lazy load 條件)
+      preloadFullTrack(inactiveAudio, nextSrc, 30000).then((ok) => {
+        console.log('[bgAudio] 下一首預載:', ok ? 'OK' : 'PARTIAL', nextSong.title);
+      });
+    }
+  }
+
   // [重點修法] 必須在設 src 的同一個 tick 內同步呼叫 play()
   // 否則 iOS 會因為 src 改變導致 paused = true,背景會失去 session lock
   let started = true;
@@ -1213,6 +1258,79 @@ function stopBgAudio() {
     try { audioB.removeAttribute('src'); audioB.load(); } catch (e) {}
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
   } catch (e) {}
+}
+
+// [E 方案 9.5/10] 預緩衝整首歌到 audio element
+// 設計理由:
+//   - iOS 進 background 後只允許「已經 buffered 的部分」播完,然後暫停
+//   - .m4a 若只 buffer 30 秒,3 分鐘的歌會在 bg 30 秒處斷 → "網路連線中斷" 報錯
+//   - 解法:前景時主動把整首拉到 100% buffered (canplaythrough),
+//     bg 期間 iOS 就不會主動斷 streaming (因為沒有「還沒拉到的部分」要繼續抓)
+//   - 切歌前預載下一首同理,避免切歌空窗期被 iOS 凍結
+//   - 注:active element 必須已經被 bound 到 Web Audio graph 才能正常 preload,
+//     不然 preload 不會跑 (Safari 對 unbound <audio> 會 lazy load)
+async function preloadFullTrack(audioEl, src, timeoutMs = 30000) {
+  if (!audioEl || !src) return false;
+  // 已經 100% buffered → noop
+  try {
+    const dur = audioEl.duration;
+    if (dur > 0 && audioEl.buffered.length > 0) {
+      const end = audioEl.buffered.end(audioEl.buffered.length - 1);
+      if (end >= dur - 0.5) {
+        console.log('[preload] 已經 100% buffered:', src.split('/').pop());
+        return true;
+      }
+    }
+  } catch (e) { /* duration 還 NaN,繼續 */ }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const cleanup = () => {
+      audioEl.removeEventListener('canplaythrough', onCanPlayThrough);
+      audioEl.removeEventListener('error', onError);
+      audioEl.removeEventListener('stalled', onStalled);
+      clearTimeout(timeoutId);
+    };
+    const onCanPlayThrough = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      console.log('[preload] canplaythrough 達到 100%:', src.split('/').pop());
+      resolve(true);
+    };
+    const onError = (e) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      console.warn('[preload] error:', audioEl.error?.code, src.split('/').pop());
+      resolve(false);
+    };
+    const onStalled = () => {
+      // Safari 在 partial buffered 時會 stall,主動 reload 一次
+      console.log('[preload] stalled,重新 load()');
+      try { audioEl.load(); } catch (_) {}
+    };
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      console.warn('[preload] timeout (', timeoutMs, 'ms),可能 partial buffered:', src.split('/').pop());
+      resolve(false);
+    }, timeoutMs);
+
+    audioEl.addEventListener('canplaythrough', onCanPlayThrough, { once: true });
+    audioEl.addEventListener('error', onError, { once: true });
+    audioEl.addEventListener('stalled', onStalled);
+
+    // 確保 src 已設 + load
+    if (!audioEl.src || !audioEl.src.endsWith(src.split('/').pop())) {
+      try { audioEl.pause(); } catch (_) {}
+      audioEl.src = src;
+      audioEl.preload = 'auto';
+      audioEl.loop = false;
+      try { audioEl.load(); } catch (_) {}
+    }
+  });
 }
 
 // audio-mode 沒有預抽 m4a 時,顯示 toast 提醒 user
