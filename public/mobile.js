@@ -253,6 +253,23 @@
     if (cs) {
       currentSong = cs;
       renderNowPlaying();
+      // [2026-08-10] iOS PWA 背景切歌根因緩解: 切歌時若 PWA 在背景,
+      //   bgAudio src 換檔在 hidden 不可靠。提示 user 回前台。
+      if (document.hidden) {
+        try {
+          if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+          document.title = `▶ ${cs.title} - 點回前台`;
+          // 5 秒後復原
+          setTimeout(() => { document.title = 'KTV 點歌台'; }, 5000);
+          // 發通知 (若使用者已授權)
+          try {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('切歌中', { body: `${cs.title || '新歌'} - 點此回前台`, tag: 'ktv-cut-song', silent: false });
+            }
+          } catch (_) {}
+          console.log('[mobile] play_song 在 hidden 中, 已震動+改標題提示');
+        } catch (_) {}
+      }
     }
     if (updatedAt) serverNowPlayingAt = updatedAt;
   });
