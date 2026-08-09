@@ -163,6 +163,8 @@
     connLabel.innerHTML = '<i class="fa-solid fa-circle text-green-500 text-[8px]"></i> 已連線';
     // 重新連線時向後端要一次最新狀態
     socket.emit('request_playlist');
+    // [2026-08-10] 通知 server 當前 visibility (預設 visible,因為剛 load 必在前景)
+    socket.emit('mobile_visibility', { visibility: document.hidden ? 'hidden' : 'visible' });
   });
 
   socket.on('disconnect', () => {
@@ -248,6 +250,13 @@
   function getElapsedSongTime() {
     return Math.floor((Date.now() - serverNowPlayingAt) / 1000);
   }
+
+  document.addEventListener('visibilitychange', () => {
+    // [2026-08-10] iOS PWA background 切歌解法: 通知 server mobile visibility
+    if (socket && socket.connected) {
+      socket.emit('mobile_visibility', { visibility: document.hidden ? 'hidden' : 'visible' });
+    }
+  });
 
   socket.on('play_song', ({ currentSong: cs, updatedAt }) => {
     if (cs) {

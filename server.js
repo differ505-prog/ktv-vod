@@ -1207,6 +1207,14 @@ const songHistory = [];
 // 自動播放時追蹤已播過的歌曲ID，避免短時間重複
 const autoPlayedIds = new Set();
 const AVOID_RECENT_COUNT = 20;
+// [2026-08-10] iOS PWA background 切歌解法: server 端 track 每個 mobile client 是否在背景。
+// 切歌時若任何 audio-mode mobile client 是 hidden → 暫存 play_song,等 mobile ack 後才廣播。
+// mobile 進 hidden 時 emit 'mobile_visibility', server 記下; 進 visible 時清除。
+// mobile socket 斷線時自動清除。
+const mobileVisibility = new Map(); // socketId → 'visible' | 'hidden'
+// 延遲中的切歌: { currentSong, updatedAt, playlistSnapshot, pendingAt, timer }
+let pendingPlaySong = null;
+const PENDING_PLAY_SONG_TIMEOUT_MS = 30 * 1000; // 30 秒沒 ack 就強制 emit
 // 歌曲播完保險超時: tv 端的 video.ended 或 audio-mode bgAudio.ended 是正常路徑。
 // 但若 ended 事件漏觸 (Safari/iOS PWA 已知問題), 為避免永遠卡在這首歌,設保險上限。
 // 30 分鐘: 遠大於任何歌的長度,只在異常情境觸發。
@@ -1368,6 +1376,12 @@ io.on('connection', (socket) => {
     if (!currentSong && playlist.length === 0) return;
     log('info', '切歌指令', { from: socket.id });
 
+    // [2026-08-10] 若 hidden mobile,改 emit cut_song_pending,TV 顯示待切歌狀態不黑幕
+    // advanceToNextSong 內部會根據 hidden 狀態決定 emit play_song 或存 pending。
+    // 注意: TV 端的舊歌「必須停止」否則會繼續播舊歌 → 這裡仍 emit stop_song,
+    // 但 TV 端在 cut_song_pending 期間「黑幕」會被 server 收回(下面補)。
+    // 簡化處理:即使 hidden 仍 emit stop_song(讓 TV 立刻停舊歌),advanceToNextSong
+    // 收到 hidden 改 emit cut_song_pending(畫面「待切歌」+ 不開新歌 video)
     io.emit('stop_song');
     if (currentSong) {
       songHistory.push(currentSong);
@@ -1472,8 +1486,27 @@ io.on('connection', (socket) => {
     });
   });
 
+  // [2026-08-10] mobile visibility tracking: 用來判斷是否要延遲切歌等 mobile 回前台
+  socket.on('mobile_visibility', ({ visibility }) => {
+    if (visibility !== 'visible' && visibility !== 'hidden') return;
+    mobileVisibility.set(socket.id, visibility);
+    log('info', 'mobile visibility', { id: socket.id, visibility });
+    // 從 hidden 變 visible → 若有 pendingPlaySong 立即 flush
+    if (visibility === 'visible' && pendingPlaySong) {
+      // 只 flush 一次,避免多個 hidden mobile 同時 ack 觸發多次
+      flushPendingPlaySong();
+    }
+  });
+
   socket.on('disconnect', () => {
     log('info', '設備離線', { id: socket.id });
+    // [2026-08-10] 清除 mobile visibility,避免離線 mobile 卡住 pendingPlaySong
+    mobileVisibility.delete(socket.id);
+    // 若 disconnect 後沒有任何 hidden mobile,主動 flush pending
+    if (pendingPlaySong && !isAnyAudioModeMobileHidden()) {
+      log('info', '所有 hidden mobile 都離線, flush pendingPlaySong');
+      flushPendingPlaySong();
+    }
   });
 });
 
@@ -1482,6 +1515,30 @@ function advanceToNextSong() {
   const next = getNextSong();
   currentSong = next;
   const now = Date.now();
+
+  // [2026-08-10] iOS PWA background 切歌解法:
+  // 若有任何 audio-mode 的 mobile client 在 document.hidden (鎖屏/切背景),
+  // 暫存 play_song 不立刻廣播,等 mobile ack mobile_visibility:visible 後才 emit。
+  // 同時廣播 cut_song_pending 給 TV → TV 顯示「待切歌」狀態(不黑幕),等 ack 才真正切。
+  if (isAnyAudioModeMobileHidden()) {
+    pendingPlaySong = {
+      currentSong: next,
+      playlist: [...playlist],
+      updatedAt: now,
+      pendingAt: now,
+      timer: setTimeout(() => {
+        log('warn', 'pendingPlaySong 30s timeout, 強制 emit');
+        flushPendingPlaySong();
+      }, PENDING_PLAY_SONG_TIMEOUT_MS),
+    };
+    io.emit('cut_song_pending', {
+      currentSong: next,
+      pendingAt: now,
+      reason: 'mobile-audio-mode-hidden',
+    });
+    log('info', '切歌暫存 (mobile bgAudio 隱藏中)', { title: next.title });
+    return;
+  }
 
   io.emit('play_song', { currentSong, updatedAt: now });
   io.emit('playlist_updated', {
@@ -1494,6 +1551,53 @@ function advanceToNextSong() {
   log('info', '現在播放', { title: currentSong.title, mode: audioMode });
 
   // 啟動超時計時（song_ended 沒來就自動切歌）
+  songTimeout = setTimeout(() => {
+    if (currentSong) {
+      log('warn', 'song_ended 超時保險觸發', { currentSong: currentSong.title });
+      io.emit('stop_song');
+      songHistory.push(currentSong);
+      if (songHistory.length > 50) songHistory.shift();
+      advanceToNextSong();
+    }
+  }, SONG_TIMEOUT_MS);
+}
+
+// [2026-08-10] helper: 檢查任何 audio-mode mobile client 是否在 hidden。
+// 注意: 只對「mobile 類型 socket」檢查,TV 永遠不算。
+function isAnyAudioModeMobileHidden() {
+  // 簡化:audioMode 是 server 全域,若 audioMode === 'original' 不需 background play。
+  // 但 user 切到 audio mode 後即使沒切回 TV,server 也記得。
+  // 所以只看 mobileVisibility 即可 (mobile 自己回報)。
+  if (mobileVisibility.size === 0) return false;
+  for (const [socketId, vis] of mobileVisibility.entries()) {
+    if (vis === 'hidden') {
+      // 檢查 socket 是否還活著
+      const s = io.sockets.sockets.get(socketId);
+      if (s) return true;
+    }
+  }
+  return false;
+}
+
+// [2026-08-10] 把 pendingPlaySong 真的 emit 出去 (mobile ack visible 或 timeout)
+function flushPendingPlaySong() {
+  if (!pendingPlaySong) return;
+  const { currentSong: ps, playlist: pp, updatedAt: pu, timer } = pendingPlaySong;
+  pendingPlaySong = null;
+  if (timer) clearTimeout(timer);
+  // 雙重保險:重新檢查 hidden 狀態 (可能這段期間又變 hidden)
+  if (isAnyAudioModeMobileHidden()) {
+    log('warn', 'flushPendingPlaySong 時仍有 hidden mobile, 強制 emit (避免無限 pending)');
+  }
+  currentSong = ps;
+  io.emit('play_song', { currentSong: ps, updatedAt: pu });
+  io.emit('playlist_updated', {
+    playlist: pp,
+    currentSong: ps,
+    updatedAt: pu,
+  });
+  log('info', 'pendingPlaySong 已 flush', { title: ps.title });
+  // 啟動超時計時
   songTimeout = setTimeout(() => {
     if (currentSong) {
       log('warn', 'song_ended 超時保險觸發', { currentSong: currentSong.title });
