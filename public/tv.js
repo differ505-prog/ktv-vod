@@ -928,21 +928,17 @@ function playBgAudio(song) {
   //   解法: 若目前 src 跟 new src 不同,先 removeAttribute('src') + load() 清空,
   //   再設 new src + load()。這個「src 從空變有」的變動 iOS 一定會執行。
   if (document.hidden) {
-    const sameSrc = bgAudio.src && bgAudio.src.endsWith(srcFile);
-    if (!sameSrc) {
-      console.log('[bgAudio] PWA 隱藏中, 先清空 src 再設新 src (避免 iOS 對 paused src 變更 no-op)');
-      try {
-        bgAudio.removeAttribute('src');
-        try { bgAudio.load(); } catch (_) {}
-      } catch (e) {}
-      bgAudio.src = src;
-      bgAudio.loop = false;
-      try { bgAudio.load(); } catch (e) { /* iOS 偶爾對 bgAudio.load() 拋 InvalidStateError, 不致命 */ }
-    } else {
-      console.log('[bgAudio] PWA 隱藏中, 同 src 不重複設');
-    }
+    // [2026-08-10 修法] iOS PWA 換歌即使 document.hidden, audioSessionType='playback'
+    //   已鎖,iOS 視為「延續媒體」→ 允許新的 play() (不是啟動新媒體)
+    // 舊版只存 pending 不 tryStart → 換歌瞬間 background 沒聲音
+    // 新版: hidden 也跑 tryStart,iOS 拒絕就 fallback pending → 等下次 visibilitychange 接力
+    console.log('[bgAudio] PWA 隱藏中, 設 src + 嘗試 play (iOS playback session 允許延續)');
     _pendingBgAudioPlay = { song, src, srcFile };
-    return;
+    bgAudio.src = src;
+    bgAudio.loop = false;
+    bgAudio.preload = 'auto';
+    try { bgAudio.load(); } catch (e) {}
+    // 不 return,繼續走下方共用 canplay/play setup
   }
 
   // 同 src (change_audio_mode 同首歌切軌) — resume
@@ -950,6 +946,7 @@ function playBgAudio(song) {
   //   audioCurrentTrack 會變, srcFile 才會跟 bgAudio.src 結尾相符。
   //   切歌時 srcFile 跟 src 完整路徑尾部比對, bgAudio.src 是舊歌完整路徑
   //   自然不會 endsWith → 走下方換 src 路徑。
+  // [2026-08-10 修法] hidden 分支已設 src → 此處 endsWith 會 true, 跳過同 src 判定
   if (bgAudio.src && bgAudio.src.endsWith(srcFile) && !_pendingBgAudioPlay) {
     console.log('[bgAudio] 同 src,只 resume');
     if (bgAudio.paused) bgAudio.play().then(() => {
@@ -967,7 +964,10 @@ function playBgAudio(song) {
 
   // [A+ 修法 (a)] 同一個 <audio> instance,只 swap src — 不要 removeAttribute + load()
   // iOS 對「同 element swap src」比「新 element」寬容,且 audio session 不會被打斷
-  bgAudio.src = src;
+  // [2026-08-10] hidden 分支已設過 src → 這裡不要再設 (會清 AbortController signal)
+  if (!document.hidden) {
+    bgAudio.src = src;
+  }
   bgAudio.loop = false;
 
   let started = false;
