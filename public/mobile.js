@@ -136,10 +136,13 @@
   // 對外網 (Tailscale Funnel / 反代) 友善:
   //   - 先 polling 確認管道通暢, 再 upgrade WebSocket
   //   - reconnection + reconnectionAttempts 上限,避免手機休眠時狂重連塞 server
-  // 2026-08-09: Funnel 統一入口走 nginx /ktv/* 路徑分流,socket.io 必須配 path 前綴
-  //   否則會被 proxy 轉去 FlowSight (port 8888) → 卡拉ok server 收不到 add_song ack
+  // 2026-08-10: Cloudflare Quick Tunnel 沒有 /ktv/ 前綴 (直連 3001 root);
+  //   Tailscale Funnel / nginx 反代 仍有 /ktv/ 前綴分流。
+  //   依 hostname 動態選 path, 兩種環境都通。
+  const isCloudflare = /\.trycloudflare\.com$/i.test(location.hostname);
+  const socketPath = isCloudflare ? '/socket.io' : '/ktv/socket.io';
   const socket = io({
-    path: '/ktv/socket.io',
+    path: socketPath,
     transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
@@ -148,14 +151,30 @@
     timeout: 20000,
   });
 
+  let _disconnectRedTimer = null;
+  let _wasConnected = false;
   socket.on('connect', () => {
+    if (_disconnectRedTimer) {
+      clearTimeout(_disconnectRedTimer);
+      _disconnectRedTimer = null;
+    }
+    // 只有「曾連線過又斷了」才視為拔線,初次連線不閃
+    if (_wasConnected) {
+      console.log('[Socket] 重新連線 (忽略短暫斷線 UI)');
+    }
+    _wasConnected = true;
     connLabel.innerHTML = '<i class="fa-solid fa-circle text-green-500 text-[8px]"></i> 已連線';
     // 重新連線時向後端要一次最新狀態
     socket.emit('request_playlist');
   });
 
   socket.on('disconnect', () => {
-    connLabel.innerHTML = '<i class="fa-solid fa-circle text-red-500 text-[8px]"></i> 連線中斷';
+    // debounce 300ms: socket.io 切 transport (polling ↔ WS) 或 tunnel 短暫丟包
+    // 會瞬間觸發 disconnect 又 connect,這期間不閃紅,直接淡掉就夠
+    if (_disconnectRedTimer) clearTimeout(_disconnectRedTimer);
+    _disconnectRedTimer = setTimeout(() => {
+      connLabel.innerHTML = '<i class="fa-solid fa-circle text-red-500 text-[8px]"></i> 連線中斷';
+    }, 300);
   });
 
   socket.on('sync_state', (state) => {
