@@ -11,18 +11,49 @@
 
   // ===== 元素 =====
   const video = document.getElementById('player');
-  const bgAudio = document.getElementById('bgAudio'); // 音樂模式背景播放
 
-  // 背景播放診斷：記錄 iOS 是否真的以主畫面 Web App 執行，以及 audio 是否被系統暫停。
+  // ===== 雙 Audio 池 (9 分修法) =====
+  // 兩個 <audio> 永遠保持 warm:iOS 對 load() 過的 element 不會凍結 session
+  // - activeAudio: 當前正在播的 (handle 一切 src swap / play)
+  // - inactiveAudio: 保險絲,只 load() 不 play(),當 active 死掉時用它接手
+  // 切歌時**不**切換 activeAudio (避免 new Audio 失去 user gesture credit),
+  // 改在 active 上 swap src (iOS 對同 element src 變更最友善)。
+  const audioA = new Audio();
+  const audioB = new Audio();
+  [audioA, audioB].forEach((a, i) => {
+    a.id = 'bgAudio' + (i === 0 ? 'A' : 'B');
+    a.preload = 'auto';
+    a.loop = false;
+    // audioSessionType='playback' 是 iOS 13+ WebKit 私有 API,
+    // 必須在第一次 user gesture 內設定,iOS 才視為媒體類別允許背景播放
+    document.body.appendChild(a);
+  });
+  let activeAudio = audioA;
+  let inactiveAudio = audioB;
+  // Web Audio 圖重綁定用:記住綁在哪個 element
+  let activeAudioElement = null; // 綁在 splitter 上的 real <audio> (可能 != activeAudio,因為保險絲接手時會切)
+
+  // [9 分修法] 此變數已棄用,只保留給舊 log 識別用;
+  // 真正的「當前播放 element」走 activeAudio。當 activeAudio 損壞需切到 audioB 時,
+  // 只要重新賦值 activeAudio = audioB,後續所有 activeAudio.xxx 都會自動走到新的 element。
+  // 我們不放棄 audioA element — 它仍在 inactiveAudio 角色中預載下一首。
+
+  // 專門用來維持 iOS 背景權限的虛擬音軌。不斷迴圈播放極短的 Base64 靜音檔，
+  // 確保 iOS 的 Audio Session 永遠不會被清空。這樣 bgAudio 就可以任意更換 src 或 pause。
+  const keepAliveAudio = new Audio();
+  keepAliveAudio.loop = true;
+
+  // 背景播放診斷：記錄 iOS 是否真的以主畫面 Web App 執行,以及 audio 是否被系統暫停。
+  // [9 分版] 改用 activeAudio 取代 bgAudio 直接讀
   const audioRuntime = () => ({
     mode: audioMode,
     visibility: document.visibilityState,
     standalone: Boolean(navigator.standalone || window.matchMedia?.('(display-mode: standalone)').matches),
-    audioSrc: bgAudio?.currentSrc || bgAudio?.src || '',
-    paused: bgAudio?.paused,
-    readyState: bgAudio?.readyState,
-    networkState: bgAudio?.networkState,
-    error: bgAudio?.error?.code || null,
+    audioSrc: activeAudio?.currentSrc || activeAudio?.src || '',
+    paused: activeAudio?.paused,
+    readyState: activeAudio?.readyState,
+    networkState: activeAudio?.networkState,
+    error: activeAudio?.error?.code || null,
   });
   const logAudioRuntime = (event, extra = {}) => console.log('[bgAudio:lifecycle]', event, { ...audioRuntime(), ...extra });
 
@@ -58,50 +89,50 @@ document.addEventListener('visibilitychange', () => {
     const pending = _pendingBgAudioPlay;
     _pendingBgAudioPlay = null;
     // [2026-08-10 修法] src 校驗:iOS PWA 對 background 設 src 偶爾被忽略,
-    //   切回前景時 bgAudio.src 可能仍指向舊歌。若 pending.srcFile 跟當前 src
+    //   切回前景時 activeAudio.src 可能仍指向舊歌。若 pending.srcFile 跟當前 src
     //   結尾不符 → 強制清空 src 後重新設,確保播的是新歌。
-    const srcMatches = bgAudio.src && bgAudio.src.endsWith(pending.srcFile);
+    const srcMatches = activeAudio.src && activeAudio.src.endsWith(pending.srcFile);
     if (!srcMatches) {
-      console.warn('[bgAudio] visibilitychange → bgAudio.src 跟 pending 不符, 強制重設 (src was:', bgAudio.src, 'expected:', pending.srcFile, ')');
+      console.warn('[bgAudio] visibilitychange → activeAudio.src 跟 pending 不符, 強制重設 (src was:', activeAudio.src, 'expected:', pending.srcFile, ')');
       try {
-        bgAudio.removeAttribute('src');
-        try { bgAudio.load(); } catch (_) {}
+        activeAudio.removeAttribute('src');
+        try { activeAudio.load(); } catch (_) {}
       } catch (e) {}
-      bgAudio.src = pending.src;
-      bgAudio.loop = false;
-      try { bgAudio.load(); } catch (e) {}
+      activeAudio.src = pending.src;
+      activeAudio.loop = false;
+      try { activeAudio.load(); } catch (e) {}
     }
     try {
-      bgAudio.currentTime = 0;
+      activeAudio.currentTime = 0;
     } catch (e) {
       console.warn('[bgAudio] 重置 currentTime 失敗:', e);
     }
     updateMediaSession(pending.song);
-    bgAudio.play().then(() => {
-      console.log('[bgAudio] 延遲 play() 成功, currentTime=', bgAudio.currentTime);
+    activeAudio.play().then(() => {
+      console.log('[bgAudio] 延遲 play() 成功, currentTime=', activeAudio.currentTime);
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-      logAudioRuntime('playback-started', { currentTime: bgAudio.currentTime });
+      logAudioRuntime('playback-started', { currentTime: activeAudio.currentTime });
     }).catch((e) => console.warn('[bgAudio] 延遲 play() 失敗：', e.name, e.message));
     return;
   }
   // (b) 沒 pending 但 audio 該在播卻 paused → 用 server 時間軸對齊, 不要盲目復活
   //     (iOS PWA 進背景時會主動 pause,這不是 user 想停)
-  if (audioMode && bgAudio.paused && bgAudio.src) {
+  if (audioMode && activeAudio.paused && activeAudio.src) {
     const elapsedMs = _currentSongStartedAt ? (Date.now() - _currentSongStartedAt) : 0;
     const expectedTime = elapsedMs / 1000;
     // 如果 server 對齊點已經超過這首歌長度 → 跳下一首
-    if (bgAudio.duration && expectedTime >= bgAudio.duration) {
+    if (activeAudio.duration && expectedTime >= activeAudio.duration) {
       console.log('[bgAudio] visibilitychange → 對齊點已過 duration, 跳下一首');
       socket.emit('song_ended');
       return;
     }
     console.log('[bgAudio] visibilitychange → 對齊 currentTime=', expectedTime.toFixed(1), 's (不再盲目復活)');
     try {
-      bgAudio.currentTime = expectedTime;
+      activeAudio.currentTime = expectedTime;
     } catch (e) {
       console.warn('[bgAudio] 對齊 currentTime 失敗:', e);
     }
-    bgAudio.play().then(() => {
+    activeAudio.play().then(() => {
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }).catch((e) => console.warn('[bgAudio] visibility-resume 失敗:', e));
   }
@@ -217,8 +248,16 @@ function initAudioGraph() {
       // 請求最低延遲，減少 Web Audio API 造成的音訊落後 (A/V sync issue)
       audioCtx = new AudioCtx({ latencyHint: 0 });
 
-      // 把 video 音源接入 Web Audio
-      sourceNode = audioCtx.createMediaElementSource(video);
+      // [終極保活] 使用 10 秒的無聲 mp3 檔案來維持 iOS 背景播放權限
+      // 用相對路徑，避免 nginx /ktv/ 前綴導致 404
+      keepAliveAudio.src = 'silence.mp3';
+      keepAliveAudio.play().then(() => {
+        console.log('[keepAliveAudio] 啟動成功，背景音訊保活中');
+      }).catch(e => console.warn('[keepAliveAudio] 啟動失敗:', e));
+
+      // [9 分修法] video 也用「第一次 create 後 cache」模式
+      // (MediaElementSource 一個 element 只能 create 一次)
+      sourceNode = ensureMediaElementSource(video);
 
       // 立體聲分離：port 0 = L (伴奏), port 1 = R (人聲)
       splitter = audioCtx.createChannelSplitter(2);
@@ -230,7 +269,7 @@ function initAudioGraph() {
       destinationGain = audioCtx.createGain();
       destinationGain.gain.value = 1.0;
 
-      // 接線
+      // 接線:sourceNode → splitter (sourceNode 是 video 的,切歌時不會動)
       sourceNode.connect(splitter);
       splitter.connect(accGain, 0); // port 0 = L (伴奏) → accGain
       splitter.connect(vocGain, 1); // port 1 = R (人聲) → vocGain ← 這是關鍵！
@@ -257,6 +296,42 @@ function initAudioGraph() {
     }
   }
 
+  // [9 分修法] 為 element 取得 MediaElementSource (每個 element 只能 create 一次)
+  // 用 WeakMap cache，第二次呼叫直接拿舊的;
+  // 這樣切歌時 disconnect 舊 source、把新 source connect 進 splitter 就好
+  const _mediaSourceCache = new WeakMap();
+  function ensureMediaElementSource(el) {
+    if (!el || !audioCtx) return null;
+    let src = _mediaSourceCache.get(el);
+    if (!src) {
+      src = audioCtx.createMediaElementSource(el);
+      _mediaSourceCache.set(el, src);
+    }
+    return src;
+  }
+
+  // [9 分修法] 把指定的 <audio> 元素接到 graph (接到 splitter)
+  // 同時 disconnect 舊的、把它從 graph 移除
+  // 注意:每個 element 的 MediaElementSource 在 ensureMediaElementSource 內 cache,
+  //       切換時只是「哪個 source 連到 splitter」不同,acGain/vocGain 鏈不動
+  //       → applyAudioMode 完全不用改
+  function bindAudioToGraph(audioEl) {
+    if (!audioReady || !splitter || !audioEl) return;
+    // 1. disconnect 舊的 (拔 source 從 splitter)
+    if (activeAudioElement && activeAudioElement !== audioEl) {
+      const oldSrc = _mediaSourceCache.get(activeAudioElement);
+      if (oldSrc) {
+        try { oldSrc.disconnect(splitter); } catch (e) {}
+      }
+    }
+    // 2. 確保新 element 有自己的 MediaElementSource
+    const newSrc = ensureMediaElementSource(audioEl);
+    if (!newSrc) return;
+    // 3. 連到 splitter (冪等:如果已連,connect 是 no-op)
+    try { newSrc.connect(splitter); } catch (e) {}
+    activeAudioElement = audioEl;
+  }
+
   function applyAudioMode(mode) {
     if (!audioReady || !audioCtx) {
       // audioGraph 還沒建好 → 緩存起來，等 initAudioGraph() 完成後再 apply
@@ -274,37 +349,37 @@ function initAudioGraph() {
       vocGain.gain.value = 0.0;
     }
     currentAudioMode = mode; // 記住目前伺服器廣播的 mode (給 audio-mode replay 用)
-    // Audio-mode 下,如果 mode 變更,重新挑對應的 .m4a 餵給 bgAudio
+    // Audio-mode 下,如果 mode 變更,重新挑對應的 .m4a 餵給 activeAudio
     if (audioMode && currentSongRef && (mode === 'original' || mode === 'vocal_off')) {
       const newTrack = mode === 'vocal_off' ? 'vocal_off' : 'original';
       if (newTrack !== audioCurrentTrack) {
-        const savedTime = bgAudio.currentTime;
+        const savedTime = activeAudio.currentTime;
         audioCurrentTrack = newTrack;
         const src = getAudioModeSrc(currentSongRef, newTrack);
         if (src) {
           // 走 playBgAudio 統一 canplay-wait 路徑,避免 iOS PWA 拒絕
           // (直接設 src → play() 在 change_audio_mode 會丟 NotAllowedError)
-          if (bgAudio.src && bgAudio.src.endsWith(src.split('/').pop())) {
+          if (activeAudio.src && activeAudio.src.endsWith(src.split('/').pop())) {
             // 同 src → 只更新 playbackState
-            bgAudio.play().then(() => {
+            activeAudio.play().then(() => {
               if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
             }).catch(() => {});
           } else {
-            bgAudio.src = src;
-            bgAudio.loop = false;
+            activeAudio.src = src;
+            activeAudio.loop = false;
             const restoreTime = savedTime;
             let started = false;
             const tryStart = () => {
               if (started) return;
               started = true;
-              bgAudio.currentTime = restoreTime;
+              activeAudio.currentTime = restoreTime;
               updateMediaSession(currentSongRef);
-              bgAudio.play().then(() => {
+              activeAudio.play().then(() => {
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
               }).catch((err) => console.warn('[bgAudio] play 失敗：', err));
             };
-            bgAudio.addEventListener('canplay', tryStart, { once: true });
-            bgAudio.addEventListener('loadeddata', tryStart, { once: true });
+            activeAudio.addEventListener('canplay', tryStart, { once: true });
+            activeAudio.addEventListener('loadeddata', tryStart, { once: true });
             setTimeout(tryStart, 1500);
           }
         }
@@ -385,20 +460,8 @@ function initAudioGraph() {
     try { video.pause(); } catch (e) {}
     video.removeAttribute('src');
     video.load();
-    // audio-mode: 2026-08-10 修法 — 不再只 pause,直接 removeAttribute('src') + load()
-    // 清空舊 src。這是 iOS PWA 背景切歌的根因:
-    //   舊版只 pause → bgAudio.src 仍是舊歌 → 接著 play_song 走 hidden 分支
-    //   設 bgAudio.src = newSrc,在 iOS 對 paused audio 的 background 變更常被忽略
-    //   → usr 切回 TV 才發現播的是舊歌
-    // 新版: stop_song 先清空 src → play_song hidden 分支從「無 src」開始設新 src,
-    //   iOS 對「src 從空變有」會真實生效,並觸發 load metadata → canplay
-    // 非 audio-mode: bgAudio 沒在用,可以真的 stopBgAudio() 釋放
     if (audioMode) {
-      try { bgAudio.pause(); } catch (e) {}
-      try {
-        bgAudio.removeAttribute('src');
-        bgAudio.load();
-      } catch (e) {}
+      try { activeAudio.pause(); } catch (e) {}
       _pendingBgAudioPlay = null; // 切歌就把 pending 洗掉,避免 race
     } else {
       stopBgAudio();
@@ -777,13 +840,14 @@ if (document.body.classList.contains('immersive') && immersiveQrCode && !immersi
 let _audioSessionLocked = false;
 function lockAudioSessionForBackground() {
   if (_audioSessionLocked) return;
-  if (!bgAudio) return;
+  if (!audioA) return; // 雙 Audio 池尚未建立
   try {
-    // iOS WebKit: 把 audio element 標記為媒體類別,iOS 才會在背景繼續播
-    if ('audioSessionType' in bgAudio) {
-      bgAudio.audioSessionType = 'playback';
-    }
-    // 同時確保 MediaSession metadata 是非空,告訴 iOS 這是合法媒體
+    // iOS WebKit: 把 (兩個) audio element 標記為媒體類別,iOS 才會在背景繼續播
+    // audioSessionType 必須在 gesture 內設定,兩個都要設
+    [audioA, audioB].forEach((a) => {
+      try { if ('audioSessionType' in a) a.audioSessionType = 'playback'; } catch (e) {}
+    });
+    // 確保 MediaSession metadata 是非空,告訴 iOS 這是合法媒體
     if ('mediaSession' in navigator && !navigator.mediaSession.metadata) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: 'KTV 音樂模式',
@@ -802,11 +866,12 @@ function lockAudioSessionForBackground() {
   window.addEventListener(evt, lockAudioSessionForBackground, { once: true, capture: true });
 });
 
+// [9 分修法] mediaSession action handler 走 activeAudio 變數 (保險絲切換自動生效)
 if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => bgAudio.play().catch(() => {}));
-  navigator.mediaSession.setActionHandler('pause', () => bgAudio.pause().catch(() => {}));
-  navigator.mediaSession.setActionHandler('seekbackward', () => { bgAudio.currentTime = Math.max(0, bgAudio.currentTime - 10); });
-  navigator.mediaSession.setActionHandler('seekforward', () => { bgAudio.currentTime = Math.min(bgAudio.duration || 0, bgAudio.currentTime + 10); });
+  navigator.mediaSession.setActionHandler('play', () => activeAudio.play().catch(() => {}));
+  navigator.mediaSession.setActionHandler('pause', () => activeAudio.pause().catch(() => {}));
+  navigator.mediaSession.setActionHandler('seekbackward', () => { activeAudio.currentTime = Math.max(0, activeAudio.currentTime - 10); });
+  navigator.mediaSession.setActionHandler('seekforward', () => { activeAudio.currentTime = Math.min(activeAudio.duration || 0, activeAudio.currentTime + 10); });
 }
 
 if ('serviceWorker' in navigator) {
@@ -823,9 +888,17 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-bgAudio.addEventListener('ended', () => {
-  // 通知後端切下一首 (只在 audio-mode 才有作用)
-  if (audioMode) {
+// [9 分修法] ended/error 必須綁在兩個 Audio 上,因為 active 可能切換
+// handler 內判斷「事件源是不是當前 active」才處理
+function _isCurrentActive(audioEl) { return audioEl === activeAudio; }
+
+audioA.addEventListener('ended', () => {
+  if (audioMode && _isCurrentActive(audioA)) {
+    socket.emit('song_ended');
+  }
+});
+audioB.addEventListener('ended', () => {
+  if (audioMode && _isCurrentActive(audioB)) {
     socket.emit('song_ended');
   }
 });
@@ -849,10 +922,12 @@ function _showAudioErrorToast(msg) {
   clearTimeout(window.___bgAudioErrT);
   window.___bgAudioErrT = setTimeout(() => { t.style.display = 'none'; }, 3000);
 }
-bgAudio.addEventListener('error', () => {
+// [9 分修法] error listener 綁兩個,helper 內判斷
+function _handleAudioError(audioEl) {
   if (!audioMode) return;
-  const src = bgAudio.currentSrc || bgAudio.src;
-  console.error('[bgAudio] error → 自動跳下一首', { src, code: bgAudio.error?.code });
+  if (!_isCurrentActive(audioEl)) return; // 不是 active,忽略
+  const src = audioEl.currentSrc || audioEl.src;
+  console.error('[bgAudio] error → 自動跳下一首', { src, code: audioEl.error?.code });
   if (_bgAudioErrorEmitted) return;
   _bgAudioErrorEmitted = true;
   _showAudioErrorToast('音訊載入失敗 (缺檔或不支援),自動跳下一首');
@@ -863,7 +938,9 @@ bgAudio.addEventListener('error', () => {
       socket.emit('song_ended');
     }
   }, 800);
-});
+}
+audioA.addEventListener('error', () => _handleAudioError(audioA));
+audioB.addEventListener('error', () => _handleAudioError(audioB));
 
 function updateMediaSession(song) {
   if (!('mediaSession' in navigator) || !song) return;
@@ -895,6 +972,13 @@ let audioCurrentTrack = 'original'; // 記住 audio-mode 目前播原唱還是�
 let _pendingBgAudioPlay = null;
 let _bgAudioLoadAbort = null;
 
+// [9 分修法] playBgAudio v3 — 雙 Audio 池主流程
+//   設計:
+//     1. 切歌只在 active 上 swap src (iOS 對同 element src 變更最友善,保留 user gesture credit)
+//     2. inactive 只 load() 不 play(),充當「保險絲」:當 active 真的壞掉時可立即接手
+//     3. document.hidden 時:不 swap active (iOS 會拒絕),改設 inactive 預載,等回前台 swap
+//     4. Web Audio 圖透過 bindAudioToGraph 切換 source (disconnect 舊 → connect 新)
+//     5. 同 src 切換 (audioMode 原唱/伴奏) 走短路 resume,不重建 player
 function playBgAudio(song) {
   if (!song) return;
   _bgAudioErrorEmitted = false; // 切歌 → 重置錯誤旗標
@@ -902,9 +986,6 @@ function playBgAudio(song) {
   console.log('[bgAudio] playBgAudio 收到:', { title: song.title, src, audioCurrentTrack, audioMode, hidden: document.hidden });
   if (!src) {
     logAudioRuntime('fallback-video', { reason: 'missing-audio-src', songId: song.id, title: song.title });
-    // 沒有預抽 m4a → 退而求其次,讓 <video> 繼續播 (但 iOS 鎖屏會停)。
-    // 顯示一條非阻擋 toast,告訴 user 此歌暫不支援背景播放。
-    // 同時通知 server 用 ffmpeg 即時補抽 audioOriginal (給未來這首歌或下一輪用)
     console.warn('[bgAudio] 此歌沒有預抽的 .m4a (audioOriginal/audioVocalOff),改用 video 繼續播 (鎖屏會停)');
     showAudioModeFallbackToast(song);
     if (socket && song.id && song.source === 'local') {
@@ -914,93 +995,124 @@ function playBgAudio(song) {
   }
   const srcFile = src.split('/').pop();
 
-  // [A+ 修法 (c)] document.hidden 時: 先 swap src + load() 進背景 cache,
-  //   等 visibilitychange 進 foreground 才 play()。
-  // 舊版只 set _pendingBgAudioPlay 不換 src → 鎖屏換歌永遠無聲(因為舊 src 還在)，
-  //   直到 user 解鎖才能聽。要先把下一首 audio 真的載進 element,
-  //   visibilitychange 時才補 play()。
-  // 注: 因為 audioSessionType='playback' 已經在第一次 user gesture 內鎖定,
-  //   iOS 已視為 media category,swap src + load() 即使在 background 也不會被拒。
-  //
-  // [2026-08-10 修法] iOS PWA 背景切歌 src 沒換 root cause:
-  //   若 bgAudio 暫停時 src 已有值,iOS 對 background 設 src 等同 no-op,
-  //   直到 element 重新 load() 過才會生效。
-  //   解法: 若目前 src 跟 new src 不同,先 removeAttribute('src') + load() 清空,
-  //   再設 new src + load()。這個「src 從空變有」的變動 iOS 一定會執行。
-  if (document.hidden) {
-    // [2026-08-10 修法] iOS PWA 換歌即使 document.hidden, audioSessionType='playback'
-    //   已鎖,iOS 視為「延續媒體」→ 允許新的 play() (不是啟動新媒體)
-    // 舊版只存 pending 不 tryStart → 換歌瞬間 background 沒聲音
-    // 新版: hidden 也跑 tryStart,iOS 拒絕就 fallback pending → 等下次 visibilitychange 接力
-    console.log('[bgAudio] PWA 隱藏中, 設 src + 嘗試 play (iOS playback session 允許延續)');
-    _pendingBgAudioPlay = { song, src, srcFile };
-    bgAudio.src = src;
-    bgAudio.loop = false;
-    bgAudio.preload = 'auto';
-    try { bgAudio.load(); } catch (e) {}
-    // 不 return,繼續走下方共用 canplay/play setup
-  }
-
-  // 同 src (change_audio_mode 同首歌切軌) — resume
-  // [2026-08-10] src 結尾比對只防「音軌切換」場景,change_audio_mode 切換時
-  //   audioCurrentTrack 會變, srcFile 才會跟 bgAudio.src 結尾相符。
-  //   切歌時 srcFile 跟 src 完整路徑尾部比對, bgAudio.src 是舊歌完整路徑
-  //   自然不會 endsWith → 走下方換 src 路徑。
-  // [2026-08-10 修法] hidden 分支已設 src → 此處 endsWith 會 true, 跳過同 src 判定
-  if (bgAudio.src && bgAudio.src.endsWith(srcFile) && !_pendingBgAudioPlay) {
-    console.log('[bgAudio] 同 src,只 resume');
-    if (bgAudio.paused) bgAudio.play().then(() => {
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-    }).catch((e) => console.warn('[bgAudio] resume 失敗:', e));
+  // === A) 同 src 短路 (audioMode 切原唱/伴奏時) ===
+  if (activeAudio.src && activeAudio.src.endsWith(srcFile) && !activeAudio.paused) {
+    console.log('[bgAudio] 同 src 已播,不動作');
     return;
   }
 
-  // [A+ 修法 (b)] 取消上一輪的 canplay/loadeddata listener,避免 race 雙重 play()
-  if (_bgAudioLoadAbort) {
-    _bgAudioLoadAbort.abort();
+  // === B) document.hidden:不 swap active,改設 inactive 預載 + pending ===
+  // 原因:iOS 對 hidden state 下對 active audio 的 src swap + play() 會拒絕 (NotAllowedError)
+  // 解法:把要播的 src 喂給 inactive,讓它真的 load() 進 buffer (load() 不需 gesture);
+  //       visibilitychange 回前台時,swap active = inactive,並呼叫 play() (foreground grace period)
+  if (document.hidden) {
+    console.log('[bgAudio] PWA 隱藏中,預載新 src 到 inactive 池 (等回前台 swap+play)');
+    _pendingBgAudioPlay = { song, src, srcFile };
+    // 先清空 inactive src,確保 iOS 真的執行 swap (src 從空變有 iOS 一定會處理)
+    try {
+      inactiveAudio.removeAttribute('src');
+      try { inactiveAudio.load(); } catch (_) {}
+    } catch (e) {}
+    inactiveAudio.src = src;
+    inactiveAudio.loop = false;
+    inactiveAudio.preload = 'auto';
+    try { inactiveAudio.load(); } catch (e) {}
+    logAudioRuntime('playBgAudio-queued', { src, audioCurrentTrack, audioMode, parked: 'inactive' });
+    return;
   }
+
+  // === C) 前景切歌:在 active 上 swap src + 同步 play() ===
+  // [A+ 修法 (b)] 取消上一輪的 listener,避免 race
+  if (_bgAudioLoadAbort) _bgAudioLoadAbort.abort();
   _bgAudioLoadAbort = new AbortController();
   const signal = _bgAudioLoadAbort.signal;
 
-  // [A+ 修法 (a)] 同一個 <audio> instance,只 swap src — 不要 removeAttribute + load()
-  // iOS 對「同 element swap src」比「新 element」寬容,且 audio session 不會被打斷
-  // [2026-08-10] hidden 分支已設過 src → 這裡不要再設 (會清 AbortController signal)
-  if (!document.hidden) {
-    bgAudio.src = src;
-  }
-  bgAudio.loop = false;
+  // 確保 active 仍在 graph 上 (保險絲切換後需重新綁)
+  bindAudioToGraph(activeAudio);
 
-  let started = false;
+  // 同 src 但 paused → resume
+  if (activeAudio.src && activeAudio.src.endsWith(srcFile)) {
+    console.log('[bgAudio] 同 src,只 resume');
+    if (activeAudio.paused) {
+      activeAudio.play().then(() => {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      }).catch((e) => console.warn('[bgAudio] resume 失敗:', e));
+    }
+    updateMediaSession(song);
+    logAudioRuntime('playBgAudio-resumed', { src, audioCurrentTrack, audioMode });
+    return;
+  }
+
+  // 真正 swap src + play
+  activeAudio.src = src;
+  activeAudio.loop = false;
+
+  // 預載 inactive 為下一首備用 (失敗時保險絲)
+  try {
+    inactiveAudio.removeAttribute('src');
+    try { inactiveAudio.load(); } catch (_) {}
+  } catch (e) {}
+  inactiveAudio.preload = 'auto';
+
+  // [重點修法] 必須在設 src 的同一個 tick 內同步呼叫 play()
+  // 否則 iOS 會因為 src 改變導致 paused = true,背景會失去 session lock
+  let started = true;
+  updateMediaSession(song);
+  activeAudio.play().then(() => {
+    console.log('[bgAudio] 同步 play() 成功');
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    logAudioRuntime('playback-started', { currentTime: activeAudio.currentTime });
+  }).catch((err) => {
+    console.warn('[bgAudio] 同步 play 失敗,交由事件觸發:', err);
+    started = false;
+  });
+
   const tryStart = (why) => {
     if (signal.aborted) return;
     if (started) return;
     started = true;
     console.log('[bgAudio] tryStart 因為', why);
-    bgAudio.currentTime = 0;
+    activeAudio.currentTime = 0;
     updateMediaSession(song);
-    bgAudio.play().then(() => {
-      console.log('[bgAudio] play() 成功, paused=', bgAudio.paused, 'currentTime=', bgAudio.currentTime);
+    activeAudio.play().then(() => {
+      console.log('[bgAudio] 事件 play() 成功, paused=', activeAudio.paused, 'currentTime=', activeAudio.currentTime);
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-      logAudioRuntime('playback-started', { currentTime: bgAudio.currentTime });
+      logAudioRuntime('playback-started', { currentTime: activeAudio.currentTime });
     }).catch((err) => {
-      console.warn('[bgAudio] play 失敗：', err.name, err.message, '— 若是 NotAllowedError 等下次 visibilitychange');
-      // 失敗也先別 retry,留給 visibilitychange listener 接手 (常見 iOS 行為)
+      console.warn('[bgAudio] play 失敗:', err.name, err.message, '— 若是 NotAllowedError 等下次 visibilitychange');
       _pendingBgAudioPlay = { song, src, srcFile };
     });
   };
-  bgAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true, signal });
-  bgAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true, signal });
+  activeAudio.addEventListener('canplay', () => tryStart('canplay'), { once: true, signal });
+  activeAudio.addEventListener('loadeddata', () => tryStart('loadeddata'), { once: true, signal });
   // cached m4a 不會觸發 canplay → 1.5s 後主動試
   setTimeout(() => tryStart('1500ms-timeout'), 1500);
   logAudioRuntime('playBgAudio-queued', { src, audioCurrentTrack, audioMode });
 }
 
+// [9 分修法] 保險絲切換:把 active 換到 inactive (inactive 需已預載好 src)
+// 前提:inactiveAudio.src 已經是目標 .m4a 且 readyState >= 2
+function switchToInactiveIfReady() {
+  if (inactiveAudio === activeAudio) return false;
+  if (!inactiveAudio.src || inactiveAudio.readyState < 2) return false;
+  // 1. 中止舊 active 的播放
+  try { activeAudio.pause(); } catch (e) {}
+  // 2. 重新綁 Web Audio graph 到 inactive
+  bindAudioToGraph(inactiveAudio);
+  // 3. 對調兩個變數的角色
+  const old = activeAudio;
+  activeAudio = inactiveAudio;
+  inactiveAudio = old;
+  return true;
+}
+
 function stopBgAudio() {
-  // 切回 TV mode 或 user 主動暫停時呼叫 — 真的要釋放 bgAudio
+  // 切回 TV mode 或 user 主動暫停時呼叫 — 真的要釋放雙 Audio
   try {
-    bgAudio.pause();
-    bgAudio.removeAttribute('src');
-    bgAudio.load();
+    try { audioA.pause(); } catch (e) {}
+    try { audioB.pause(); } catch (e) {}
+    try { audioA.removeAttribute('src'); audioA.load(); } catch (e) {}
+    try { audioB.removeAttribute('src'); audioB.load(); } catch (e) {}
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
   } catch (e) {}
 }
