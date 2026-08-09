@@ -78,11 +78,15 @@
 //     (b) 沒 pending 但 bgAudio paused → 用 server 廣播時附的 updatedAt 對齊 currentTime
 //         (server emit play_song 已附 updatedAt,SyncState 也會帶) 再 play
 let _currentSongStartedAt = 0; // server 端 play_song 時的 timestamp (ms)
-// [B 方案] visibilitychange handler:
-//   1. 如果有 pending (前景 sync play 失敗留下來的 fallback) → 補做 play
-//   2. 如果 audio 該在播卻 paused → 對齊 server 時間軸再 resume
+// [B' 修法] visibilitychange handler:
+//   1. 回前景時先 unbypassAudioGraph (重接 accGain/vocGain 鏈)
+//   2. 如果有 pending (前景 sync play 失敗留下來的 fallback) → 補做 play
+//   3. 如果 audio 該在播卻 paused → 對齊 server 時間軸再 resume
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
+  // [B' 修法] 回前台 → 重接 graph + 重設 gain
+  unbypassAudioGraph();
+
   // (a) fallback 補做:只在 sync play 真的失敗時才有 pending
   if (_pendingBgAudioPlay) {
     console.log('[bgAudio] visibilitychange → 補做 pending play()');
@@ -305,11 +309,15 @@ function initAudioGraph() {
   //       → applyAudioMode 完全不用改
   function bindAudioToGraph(audioEl) {
     if (!audioReady || !splitter || !audioEl) return;
+    // [B' 修法] bypass 模式:source 已接 destination,不要再接 splitter (會雙路輸出)
+    if (graphBypassed) return;
     // 1. disconnect 舊的 (拔 source 從 splitter)
     if (activeAudioElement && activeAudioElement !== audioEl) {
       const oldSrc = _mediaSourceCache.get(activeAudioElement);
       if (oldSrc) {
         try { oldSrc.disconnect(splitter); } catch (e) {}
+        // [B' 修法] 舊 element 也要拔掉 bypass 連線 (避免雙 source 連 destination)
+        try { oldSrc.disconnect(destinationGain); } catch (e) {}
       }
     }
     // 2. 確保新 element 有自己的 MediaElementSource
@@ -318,6 +326,55 @@ function initAudioGraph() {
     // 3. 連到 splitter (冪等:如果已連,connect 是 no-op)
     try { newSrc.connect(splitter); } catch (e) {}
     activeAudioElement = audioEl;
+  }
+
+  // [B' 修法] 圖節點:
+  //   - destinationGain 是 graph → 耳機的總音量,前景背景都用這個
+  //   - 背景時不接 splitter,改接 source → destinationGain (繞過 accGain/vocGain)
+  //   - 如此 iOS 背景時仍可聽到聲音 (只是沒人聲/伴奏分離)
+  let graphBypassed = false;
+
+  // [B' 修法] 背景降級:把 source 從 splitter 拔掉,直接接 destinationGain
+  // iOS PWA 進背景時,Web Audio graph 對 splitted gain 的計算極不穩,
+  // 聲音會突然沒掉。bypass 期間圖縮到最短,確保有聲音。
+  function bypassAudioGraph() {
+    if (!audioReady || !destinationGain) return;
+    if (graphBypassed) return;
+    graphBypassed = true;
+    console.log('[audioGraph] Bypass 模式啟動 (background)');
+    // 拔掉所有 active source 從 splitter
+    for (const el of [audioA, audioB]) {
+      const src = _mediaSourceCache.get(el);
+      if (!src) continue;
+      try { src.disconnect(splitter); } catch (e) {}
+      try { src.disconnect(destinationGain); } catch (e) {} // 先清舊的(若有)
+      try { src.connect(destinationGain); } catch (e) {}
+    }
+  }
+
+  // [B' 修法] 前台恢復:把 source 從 destinationGain 拔掉,接回 splitter
+  // 然後重跑 applyAudioMode (重設 accGain/vocGain 對應目前 mode)
+  function unbypassAudioGraph() {
+    if (!audioReady || !splitter) return;
+    if (!graphBypassed) return;
+    graphBypassed = false;
+    console.log('[audioGraph] Bypass 解除 (foreground)');
+    // 拔所有 source 從 destinationGain
+    for (const el of [audioA, audioB]) {
+      const src = _mediaSourceCache.get(el);
+      if (!src) continue;
+      try { src.disconnect(destinationGain); } catch (e) {}
+    }
+    // 接 active 到 splitter
+    if (activeAudio) {
+      const src = _mediaSourceCache.get(activeAudio);
+      if (src) {
+        try { src.connect(splitter); } catch (e) {}
+      }
+      activeAudioElement = activeAudio;
+    }
+    // 重設 gain 對應目前 mode
+    applyAudioMode(currentAudioMode || 'original');
   }
 
   function applyAudioMode(mode) {
@@ -1001,7 +1058,7 @@ function playBgAudio(song) {
     return;
   }
 
-  // [B 方案] 隱藏時:在 active 同一個 element 上 swap src + 同步 play()
+  // [B' 修法] 隱藏時:在 active 同一個 element 上 swap src + 同步 play()
   // 設計理由:
   //   - iOS 對「同一個 audio element 在 background 做 src swap + play()」是放行的 (session 已被首次 gesture 鎖)
   //   - iOS 對「在 background 對第二個 audio element 呼叫 play()」會丟 NotAllowedError (MediaSession 只能被一個 element 擁有)
@@ -1012,6 +1069,9 @@ function playBgAudio(song) {
   if (document.hidden) {
     console.log('[bgAudio] PWA 隱藏中,在 active 立即 swap src + play (iOS 對同 element bg swap 放行)');
     _pendingBgAudioPlay = null; // 不再延遲,立即執行
+
+    // [B' 修法] 背景 → Web Audio graph bypass (聲音不再走 accGain/vocGain,確保有聲)
+    bypassAudioGraph();
 
     // 取消上一輪 listener
     if (_bgAudioLoadAbort) _bgAudioLoadAbort.abort();
