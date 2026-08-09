@@ -136,13 +136,10 @@
   // 對外網 (Tailscale Funnel / 反代) 友善:
   //   - 先 polling 確認管道通暢, 再 upgrade WebSocket
   //   - reconnection + reconnectionAttempts 上限,避免手機休眠時狂重連塞 server
-  // 2026-08-10: Cloudflare Quick Tunnel 沒有 /ktv/ 前綴 (直連 3001 root);
-  //   Tailscale Funnel / nginx 反代 仍有 /ktv/ 前綴分流。
-  //   依 hostname 動態選 path, 兩種環境都通。
-  const isCloudflare = /\.trycloudflare\.com$/i.test(location.hostname);
-  const socketPath = isCloudflare ? '/socket.io' : '/ktv/socket.io';
+  // 2026-08-10: Cloudflare Quick Tunnel 透過 nginx 8089 proxy, 仍帶 /ktv/ 前綴 (跟 Funnel 一致)
+  //   統一用 /ktv/socket.io, 兩種 tunnel 行為相同
   const socket = io({
-    path: socketPath,
+    path: '/ktv/socket.io',
     transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
