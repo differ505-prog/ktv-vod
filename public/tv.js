@@ -83,23 +83,40 @@ let _currentSongStartedAt = 0; // server 端 play_song 時的 timestamp (ms)
 //   2. 如果有 pending (前景 sync play 失敗留下來的 fallback) → 補做 play
 //   3. 如果 audio 該在播卻 paused → 對齊 server 時間軸再 resume
 document.addEventListener('visibilitychange', () => {
-  // [E 方案] 進背景瞬間:確保 active audio 100% buffered
+  // [E 方案] 進背景瞬間:確保 active audio 100% buffered + 重啟 audioCtx
   //   iOS bg 後只允許已 buffered 部分播完,streaming 會被切
   //   JS 在 bg 仍可執行 5-10s grace window,趁這時把 active 拉到 canplaythrough
+  //   另外:audioCtx 在 bg 會被 iOS suspend,bypass + resume() 可強制重新 audible
   if (document.hidden && audioMode && activeAudio && activeAudio.src) {
     const src = activeAudio.src;
     console.log('[bgAudio] 進背景,主動確保 100% buffered:', src.split('/').pop());
-    // 不 await (返回時 JS 可能已凍結),丟 background promise 跑就好
+    // (1) bypass Web Audio graph (iOS bg 期間 accGain/vocGain 鏈可能 silent 掉)
+    try { bypassAudioGraph(); } catch (e) { console.warn('[bgAudio] bg bypass 失敗:', e); }
+    // (2) resume audioCtx (iOS bg 會 suspend → 無聲;resume() 把它叫醒)
+    if (audioCtx && audioCtx.state !== 'running') {
+      audioCtx.resume().then(() => {
+        console.log('[bgAudio] bg audioCtx resume OK,state=', audioCtx.state);
+      }).catch((e) => console.warn('[bgAudio] bg audioCtx resume 失敗:', e));
+    }
+    // (3) 預載 active + inactive (grace window 內搶 100% buffered)
     preloadFullTrack(activeAudio, src, 8000).then((ok) => {
       console.log('[bgAudio] bg preload 結果:', ok ? 'OK 100%' : 'PARTIAL (grace window 不夠)');
     });
-    // 順便也預載下一首到 inactive
     if (typeof nextSong !== 'undefined' && nextSong) {
       const nextSrc = getAudioModeSrc(nextSong, audioCurrentTrack);
       if (nextSrc) {
         bindAudioToGraph(inactiveAudio);
         preloadFullTrack(inactiveAudio, nextSrc, 8000).catch(() => {});
       }
+    }
+    // (4) bg 瞬間保險:active 該在播卻 paused → 強制 play() + 對齊 currentTime
+    //   iOS 進 bg 時偶爾會主動 pause,即使 src 還沒播完
+    if (activeAudio && activeAudio.paused && activeAudio.src) {
+      console.log('[bgAudio] bg 瞬間 active paused,強制 play()');
+      activeAudio.play().then(() => {
+        console.log('[bgAudio] bg 強制 play() 成功, currentTime=', activeAudio.currentTime);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      }).catch((e) => console.warn('[bgAudio] bg 強制 play() 失敗:', e.name, e.message));
     }
   }
   if (document.hidden) return;
