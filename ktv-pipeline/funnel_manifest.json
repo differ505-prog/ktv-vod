@@ -1,8 +1,13 @@
 {
-  "_comment": "中央 Tailscale Funnel 清單。所有專案共用同一份。修改後 funnel_manager.sh 會自動重建全部 tunnel，避免各專案 watchdog 互踩。",
+  "_comment": "中央 Tailscale Funnel 清單（2026-08-12 修憲：KTV 獨立，經 Node.js proxy :8444，不走 funnel）。",
   "_format": "port:target_url",
+  "_design_2026-08-12": [
+    "KTV: Node.js proxy :8444 (獨立 HTTPS 出口，TLS 用 Tailscale cert)",
+    "FlowSight: :443 funnel → nginx :8889 → flowsight :8888",
+    "WorldMonitor: :10000 funnel → HA :8081"
+  ],
   "funnels": [
-    { "port": 443,   "target": "http://localhost:3001", "owner": "ktv-vod",     "url": "https://vibe-nas.taila67710.ts.net/tv.html" },
-    { "port": 10000, "target": "http://localhost:8081", "owner": "worldmonitor", "url": "https://vibe-nas.taila67710.ts.net:10000/" }
+    { "port": 443,   "target": "http://localhost:8889", "owner": "flowsight-funnel-proxy", "url": "https://vibe-nas.taila67710.ts.net/" },
+    { "port": 10000, "target": "http://localhost:8081", "owner": "worldmonitor",             "url": "https://vibe-nas.taila67710.ts.net:10000/" }
   ]
 }

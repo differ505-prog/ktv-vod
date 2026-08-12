@@ -12,13 +12,16 @@
 #   bash funnel_manager.sh --verify-only    # 重建後只 verify，不動
 #
 # 設計: 2026-08-08 修憲, 根治 tunnel watchdog 互踩。
+# 2026-08-12 修憲: KTV 從 funnel 分離，經 Node.js proxy :8444 獨立出口。
+# funnel_manager.sh 只管理 flowsight (:443) 和 worldmonitor (:10000) 兩個 funnel。
 # =========================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/funnel_manifest.json"
 LOCK_FILE="/var/run/funnel-manager.lock"
-LOG_FILE="/var/log/funnel-manager.log"
+# 2026-08-09 修憲：log 改用 user-writable 路徑（vibe 無法寫 /var/log/）
+LOG_FILE="$HOME/funnel-manager.log"
 
 log() {
     local ts
@@ -74,6 +77,27 @@ do_check() {
 }
 
 do_rebuild() {
+    # ── 2026-08-09 加強：rebuild 前先記錄「搶劫事件」─────────────────
+    # 抓現有 funnel 狀態，發現 manifest 沒列的 port（被外部強加）就 warn
+    local pre_state
+    pre_state="$(echo '05050505' | sudo -S tailscale funnel status 2>&1 || true)"
+    if echo "$pre_state" | grep -q 'proxy http'; then
+        local hijack_detected=0
+        while IFS= read -r line; do
+            local p t
+            p="$(echo "$line" | grep -oE "https://[a-zA-Z0-9.-]+:[0-9]+" | head -1 | awk -F: '{print $NF}')"
+            t="$(echo "$line" | grep -oE "proxy http://[^ ]+" | awk '{print $NF}')"
+            # 檢查 (port, target) 是否在 manifest 裡
+            if [ -n "$p" ] && [ -n "$t" ] && ! echo "$ENTRIES" | grep -q "^${p}|${t}|"; then
+                log "HIJACK_DETECTED port=$p target=$t (not in manifest) - rebuild 將會清掉"
+                hijack_detected=$((hijack_detected + 1))
+            fi
+        done <<< "$(echo "$pre_state" | grep 'proxy http')"
+        if [ "$hijack_detected" -gt 0 ]; then
+            log "REBUILD_TRIGGERED reason=manifest_mismatch count=$hijack_detected"
+        fi
+    fi
+
     log "RESET: tailscale serve reset"
     echo '05050505' | sudo -S tailscale serve reset 2>&1 | sed 's/^/  /' | tee -a "$LOG_FILE" || true
     log "RESET: tailscale funnel reset"

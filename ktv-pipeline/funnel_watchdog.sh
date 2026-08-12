@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # =========================================================
-# Funnel watchdog — 確保 https://vibe-nas.taila67710.ts.net/ 對外活著
+# Funnel watchdog — 確保 KTV 對外路徑 (/ktv/*) 活著
+#
+# 2026-08-09 修憲：
+#   - KTV 對外網址從 :10001/tv.html 改成 :443/ktv/tv.html（路徑分流）
+#   - 中央 manifest (funnel_manifest.json) 也對應改成 :443 → nginx
+#   - watchdog 仍然保留 reclaim 能力（透過 funnel_manager.sh）
+#   - 頻率: 每 5 分鐘 (systemd timer)
 #
 # 用法:
 #   安裝: bash ktv-pipeline/install_funnel_watchdog.sh
@@ -22,9 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGER="${SCRIPT_DIR}/funnel_manager.sh"
 LOG_FILE="/var/log/funnel-watchdog.log"
 
+# 2026-08-12：對外網址改為 Node.js proxy :8444/ktv/*
 KTV_URLS=(
-    "https://vibe-nas.taila67710.ts.net/tv.html"
-    "https://vibe-nas.taila67710.ts.net/mobile.html"
+    "https://vibe-nas.taila67710.ts.net:8444/ktv/tv.html"
+    "https://vibe-nas.taila67710.ts.net:8444/ktv/mobile.html"
 )
 KTV_LOCAL="http://localhost:3001/tv.html"
 
