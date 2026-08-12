@@ -494,14 +494,16 @@ function scanLocalVideos() {
         const raw = path.basename(f, path.extname(f));
         // 跳過已經是 vocal_off 變體，避免在 library 重複出現
         if (/_vocal_off$/.test(raw)) continue;
+        // mp4 結尾常有 _ktv 後綴，但 m4a 通常不帶此後綴 → 先去掉再找 m4a
+        const rawForAudio = raw.replace(/_ktv$/, '');
         // 用 parseSongTitle 淨化檔名 → { title, artist }
         const { title, artist } = parseSongTitle(raw);
         // 若對應的 *_vocal_off.mp4 存在，就帶 srcVocalOff 給 TV 切換
         const vocalOffName = `${raw}_vocal_off.mp4`;
         const vocalOffExists = fs.existsSync(path.join(VIDEO_DIR, vocalOffName));
         // PWA 背景音訊:若有預先抽好的 .m4a (見 ktv-pipeline/pwa_audio.py),也帶給前端
-        const audioOrigName = `${raw}.m4a`;
-        const audioVocName = `${raw}-vocal-off.m4a`;
+        const audioOrigName = `${rawForAudio}.m4a`;
+        const audioVocName = `${rawForAudio}-vocal-off.m4a`;
         const audioOrigExists = fs.existsSync(path.join(AUDIO_DIR, audioOrigName));
         const audioVocExists = fs.existsSync(path.join(AUDIO_DIR, audioVocName));
         local.push({
@@ -680,9 +682,8 @@ function rebuildLibrary() {
     // 已在 playlist / 正在播 → 跳過
     if (playlist.some((s) => s.id === libSong.id)) continue;
     if (currentSong && currentSong.id === libSong.id) continue;
-    // 重新確認 m4a 是否到位
-    const basename = decodeURIComponent(path.basename(new URL(libSong.src, 'http://x').pathname));
-    const raw = path.basename(basename, path.extname(basename));
+    // 重新確認 m4a 是否到位（mp4 結尾的 _ktv 後綴 m4a 通常不帶）
+    const raw = path.basename(basename, path.extname(basename)).replace(/_ktv$/, '');
     const audioOrigExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}.m4a`));
     const audioVocExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}-vocal-off.m4a`));
     const vocalOffMp4Exists = fs.existsSync(path.join(VIDEO_DIR, `${raw}_vocal_off.mp4`));
