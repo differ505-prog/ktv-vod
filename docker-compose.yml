@@ -78,6 +78,7 @@ services:
       - BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
       - JOB_STORE_PATH=/data/telegram-jobs.json
+      - NODE_OPTIONS=--dns-result-order=ipv4first
     volumes:
       - ./ktv-pipeline/telegram_bot.js:/app/telegram_bot.js:ro
       - ./data/telegram-bot:/data
