@@ -4,7 +4,7 @@
 > 任何不能遺忘的基礎設施資訊、不可違反的部署規則，都記錄在這裡。
 > **不要在對話中反覆詢問已記錄的內容。**
 
-最後更新：2026-08-05（§5.9 新增檔名禁用 `#/&/%` 防呆；§5.7 補 Case #003）
+最後更新：2026-08-12（§6 新增 KTV 獨立 HTTPS proxy 架構，KTV 與 FlowSight 完全分離）
 
 ---
 
@@ -58,9 +58,10 @@
 
 | 用途 | URL | 對應 |
 |---|---|---|
-| **KTV** | `https://vibe-nas.taila67710.ts.net/tv.html` | host `:3001` |
-| Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | host `:8096` |
-| worldmonitor | `https://vibe-nas.taila67710.ts.net:10000/` | host `:8081` |
+| **KTV** | `https://vibe-nas.taila67710.ts.net:8444/ktv/` | Node.js proxy `:8444` → nginx `:3003` → KTV `:3001` |
+| FlowSight | `https://vibe-nas.taila67710.ts.net/` | nginx `:443` → flowsight `:8888` |
+| Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | Tailscale Funnel → host `:8096` |
+| worldmonitor | `https://vibe-nas.taila67710.ts.net:10000/` | Tailscale Funnel → host `:8081` |
 
 ### 6.2 設定指令（sudo）
 
@@ -68,22 +69,37 @@
 # 一次性：讓當前使用者能改 tailscale serve config
 echo '05050505' | sudo -S tailscale set --operator=$(whoami)
 
-# 加 KTV Funnel（占 443，與 Jellyfin 8443 不衝突）
-echo '05050505' | sudo -S tailscale funnel --bg --https=443 http://localhost:3001
+# 設定流程（2026-08-12 新架構）：
+# 1. KTV nginx on :3003 (http, via /ktv/ path)
+# 2. Node.js HTTPS proxy on :8444 (TLS termination, uses Tailscale certs)
+# 3. FlowSight nginx on :443 (獨立的 stream nginx, 已有)
+# 各自獨立，不互相覆蓋
 
 # 加 worldmonitor Funnel（占 10000）
 echo '05050505' | sudo -S tailscale funnel --bg --https=10000 http://localhost:8081
 
 # 檢視
-sudo tailscale serve status
+tailscale serve status
 ```
+
+### 6.2.1 KTV HTTPS Proxy 架構（2026-08-12）
+
+```
+外網:8444/ktv/  →  Node.js (TLS, Tailscale cert)  →  nginx :3003  →  KTV :3001
+                          ↓
+                   /tmp/ts-cert.{key,crt}
+                   (由 sudo 從 /var/lib/tailscale/certs/ 複製)
+```
+
+- 腳本: `ktv-https-proxy.js` (在 ktv-vod 專案)
+- systemd service: `ktv-https-proxy.service` (在 `~/.config/systemd/user/`)
+- 部署: `deploy_ktv_proxy.sh`
+- 修復後重啟: `systemctl --user restart ktv-https-proxy`
 
 ### 6.3 重要約束
 
-- Funnel 預設走 **HTTPS port 443**，沒法直接換 port — 想用其他 port 必須在 Tailscale admin 後台 ACL 開「allow funnel on port X」。
-- Jellyfin 已用 `:8443` Funnel，KTV 用 `:443`，worldmonitor 用 `:10000`，三者**不會互相覆蓋**。
-- Tailscale Funnel 的 `*.ts.net` 是**公開 HTTPS**，瀏覽器直接打就能連（朋友不必裝 Tailscale），跟 Quick Tunnel 行為類似。
-- KTV APK 用 `window.location.host` 組 server URL，所以連外網 Funnel 自動走 https，無需改 APK。
+- KTV 用 Node.js proxy 在 `:8444`，FlowSight 用 nginx stream 在 `:443`，**兩者完全獨立**。
+- flowsight 的 nginx 沒有 stream module，無法在 443 內加 KTV 路由，所以用 Node.js proxy 作為獨立入口。
 
 ### 6.3.1 Funnel watchdog（2026-08-07 修憲）
 
