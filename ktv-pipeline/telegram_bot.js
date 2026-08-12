@@ -10,8 +10,11 @@
  * 取得 BOT_TOKEN: Telegram 找 @BotFather → /newbot
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
+import dns from 'node:dns';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -20,8 +23,6 @@ if (!BOT_TOKEN) {
   console.error('    1. Telegram 找 @BotFather → /newbot → 取得 token');
   console.error('    2. NAS 上 echo "TELEGRAM_BOT_TOKEN=xxx" >> /home/vibe/ktv-vod/.env');
   console.error('    3. cd /home/vibe/ktv-vod && docker compose up -d telegram-bot');
-  // 退出 0:docker 視為「正常停機」,不會瘋狂重啟 spam logs
-  // 用 docker compose start / up -d 在 user 填好 token 後即可重啟
   process.exit(0);
 }
 
@@ -34,6 +35,60 @@ const ALLOWED_USERS   = (process.env.ALLOWED_USERS || '')               // 可�
 const JOB_STORE_PATH  = process.env.JOB_STORE_PATH || '/data/telegram-jobs.json';
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+// ─── DNS / 網路可達性偵測（未來防衛性編程）──────────────────────────
+// ktv-net 為純 IPv4 網路, Docker 內嵌 DNS 可能返回 IPv6 位址,
+// 導致 Node.js fetch 無法連線。此診斷區塊在啟動時提前發現問題,
+// 避免上線後只能看 [poll] error 卻不知道根因。──────────────────────
+
+const PREFER_IPV4 = process.env.NODE_OPTIONS?.includes('dns-result-order=ipv4first');
+
+function logNetDiagnosis() {
+  console.log('[net-diag] 網路環境偵測:');
+  console.log(`[net-diag]   NODE_OPTIONS=${process.env.NODE_OPTIONS || '(未設定)'}`);
+  console.log(`[net-diag]   預期 DNS 優先 IPv4: ${PREFER_IPV4 ? '是 ✓' : '否 ✗ (可能問題!)'}`);
+  console.log(`[net-diag]   DNS nameserver: 127.0.0.11 (Docker 內嵌, 會返回 AAAA IPv6 記錄)`);
+}
+
+async function diagnoseTelegramReachability() {
+  console.log('[net-diag] 測試 Telegram API 可達性...');
+  const target = `${TELEGRAM_API}/getMe`;
+
+  // 測試 DNS 解析結果（A 記錄 = IPv4）
+  const ipv4 = await dns.promises.resolve4('api.telegram.org').then(a => a?.[0]).catch(() => null);
+  console.log(`[net-diag]   api.telegram.org → IPv4: ${ipv4 || '解析失敗'}`);
+
+  if (!ipv4) {
+    console.error('[net-diag] ✗ DNS A 記錄解析失敗 (pure IPv6 or unreachable)');
+    return false;
+  }
+
+  // 用 Node.js 內建 fetch（跟 pollLoop 同樣邏輯）做真實連線測試
+  try {
+    const r = await fetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeout: 5 }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const body = await r.text().catch(() => '(無法解析 body)');
+    // 401 = token 無效但網路 OK, 403/404 = 網路 OK, 5xx = 網路 OK
+    console.log(`[net-diag] ✓ Telegram API 可達 (HTTP ${r.status}): ${body.slice(0, 120)}`);
+    return true;
+  } catch (err) {
+    console.error(`[net-diag] ✗ 無法連線 Telegram API: ${err.cause?.message || err.message}`);
+    console.error('[net-diag]   可能原因:');
+    if (!PREFER_IPV4) {
+      console.error('[net-diag]   1. ktv-net 為純 IPv4 網路, 但 DNS 返回 IPv6 位址');
+      console.error('[net-diag]      → 修復: docker-compose.yml 設定 NODE_OPTIONS=--dns-result-order=ipv4first');
+    }
+    console.error('[net-diag]   2. 網段防火牆封鎖 api.telegram.org (port 443)');
+    console.error('[net-diag]   3. Proxy / VPN 設定問題');
+    return false;
+  }
+}
+
+// ─── 共用工具 ────────────────────────────────────────────────────
 
 function ktvHeaders() {
   const h = { 'Content-Type': 'application/json' };
@@ -247,7 +302,18 @@ async function pollLoop() {
     try {
       await pollOnce();
     } catch (err) {
-      console.error('[poll] error:', err.message);
+      const hint = err.cause?.message || err.message;
+      // 提煉常見錯誤模式，給出具體修復指引
+      if (hint.includes('getaddrinfo') || hint.includes('ENOTFOUND') || hint.includes('EAI_AGAIN')) {
+        console.error(`[poll] ✗ DNS 解析失敗: ${hint}`);
+        console.error('[poll]   → 確認 ktv-net 網路正常, 或設定 NODE_OPTIONS=--dns-result-order=ipv4first');
+      } else if (hint.includes('ECONNREFUSED')) {
+        console.error(`[poll] ✗ 連線被拒: ${hint}`);
+      } else if (hint.includes('ETIMEDOUT') || hint.includes('timeout')) {
+        console.error(`[poll] ✗ 連線超時: ${hint}`);
+      } else {
+        console.error('[poll] ✗ error:', hint);
+      }
       await sleep(5000);
     }
   }
@@ -305,6 +371,12 @@ console.log('[start] KTV Telegram Bot');
 console.log(`  KTV API: ${KTV_API}`);
 console.log(`  Allowed users: ${ALLOWED_USERS.length === 0 ? '(all)' : ALLOWED_USERS.join(',')}`);
 console.log(`  Job store: ${JOB_STORE_PATH}`);
+logNetDiagnosis();
+const telegramReachable = await diagnoseTelegramReachability();
+if (!telegramReachable) {
+  console.error('[start] Telegram API 不可達, 將進入 poll 並持續重試...');
+}
+
 loadJobs();
 
 process.on('SIGINT',  () => { console.log('\n[stop] SIGINT');  running = false; });
