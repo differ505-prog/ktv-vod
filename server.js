@@ -206,6 +206,11 @@ const io = new Server(server, {
   // 避免 idle 30 秒就被代理或 NAT 誤判斷線。
   pingInterval: 25000,
   pingTimeout: 60000,
+  // [DEBUG] 添加 WebSocket upgrade 最佳化 header
+  allowRequest: (req, callback) => {
+    // 允許所有跨域請求 (cors 已經處理 origin)
+    callback(null, true);
+  },
 });
 
 // ===== 靜態託管 =====

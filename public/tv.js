@@ -476,18 +476,34 @@ function initAudioGraph() {
   // 2026-08-09: Funnel 統一入口走 nginx /ktv/* 路徑分流,socket.io 必須配 path 前綴
   //   否則會被 proxy 轉去 FlowSight (port 8888) → 卡拉ok server 收不到 play_song / library_updated
   // 2026-08-10: Cloudflare Quick Tunnel 透過 nginx 8089 proxy 仍帶 /ktv/, 跟 Funnel 一致
-  const socket = io({ path: '/ktv/socket.io', reconnection: true });
-
-  socket.on('connect', () => {
-    console.log('[Socket] 已連線', socket.id);
-    connectionStatus.innerHTML = '<i class="fa-solid fa-circle text-green-500"></i> 已連線';
+  // [DEBUG] 添加詳細連線日誌，協助診斷 net::ERR_FAILED 問題
+  const _tvSocketStart = Date.now();
+  console.log('[Socket] 初始化中, URL 自動推斷, path=/ktv/socket.io');
+  const socket = io({
+    path: '/ktv/socket.io',
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
   });
 
+  // [DEBUG] socket.io 內部事件日誌（合併 UI 邏輯）
+  socket.on('connect', () => {
+    console.log(`[Socket] ✅ connect, id=${socket.id}, elapsed=${Date.now()-_tvSocketStart}ms`);
+    connectionStatus.innerHTML = '<i class="fa-solid fa-circle text-green-500"></i> 已連線';
+  });
+  socket.on('connect_error', (err) => {
+    console.error(`[Socket] ❌ connect_error: ${err.message}, type=${err.type}, code=${err.code}`);
+  });
   socket.on('disconnect', (reason) => {
-    console.warn('[Socket] 斷線:', reason, '— 等 visibilitychange 回前台 reconnect');
+    console.warn(`[Socket] ⚠️ disconnect: ${reason} — 等 visibilitychange 回前台 reconnect`);
     connectionStatus.innerHTML = '<i class="fa-solid fa-circle text-red-500"></i> 連線中斷';
-    // iOS PWA 進背景時 socket 會被瀏覽器節流 → Funnel 502。reconnection: true 預設就會自動重試,
-    // 但 iOS 凍得很徹底,通常要 visibilitychange 回前台才會立刻恢復
+  });
+  socket.on('error', (err) => {
+    console.error(`[Socket] ❌ error:`, err);
+  });
+  socket.io.on('error', (err) => {
+    console.error(`[Socket] ❌ engine.io error:`, err);
   });
 
   // 切回前景時若 socket 還是斷的 → 強制重連一次 (避免 502 cycle 拖太久)

@@ -138,6 +138,11 @@
   //   - reconnection + reconnectionAttempts 上限,避免手機休眠時狂重連塞 server
   // 2026-08-10: Cloudflare Quick Tunnel 透過 nginx 8089 proxy, 仍帶 /ktv/ 前綴 (跟 Funnel 一致)
   //   統一用 /ktv/socket.io, 兩種 tunnel 行為相同
+  // [DEBUG] 添加詳細連線日誌，協助診斷 net::ERR_FAILED 問題
+  const _socketStart = Date.now();
+  let _disconnectRedTimer = null;
+  let _wasConnected = false;
+  console.log('[Socket] 初始化中, URL 會自動從 window.location 推斷, path=/ktv/socket.io');
   const socket = io({
     path: '/ktv/socket.io',
     transports: ['polling', 'websocket'],
@@ -148,32 +153,42 @@
     timeout: 20000,
   });
 
-  let _disconnectRedTimer = null;
-  let _wasConnected = false;
+  // [DEBUG] socket.io 內部事件日誌（合併 UI 邏輯）
   socket.on('connect', () => {
+    console.log(`[Socket] ✅ connect 事件, id=${socket.id}, elapsed=${Date.now()-_socketStart}ms`);
     if (_disconnectRedTimer) {
       clearTimeout(_disconnectRedTimer);
       _disconnectRedTimer = null;
     }
-    // 只有「曾連線過又斷了」才視為拔線,初次連線不閃
     if (_wasConnected) {
       console.log('[Socket] 重新連線 (忽略短暫斷線 UI)');
     }
     _wasConnected = true;
     connLabel.innerHTML = '<i class="fa-solid fa-circle text-green-500 text-[8px]"></i> 已連線';
-    // 重新連線時向後端要一次最新狀態
     socket.emit('request_playlist');
-    // [2026-08-10] 通知 server 當前 visibility (預設 visible,因為剛 load 必在前景)
     socket.emit('mobile_visibility', { visibility: document.hidden ? 'hidden' : 'visible' });
   });
-
-  socket.on('disconnect', () => {
-    // debounce 300ms: socket.io 切 transport (polling ↔ WS) 或 tunnel 短暫丟包
-    // 會瞬間觸發 disconnect 又 connect,這期間不閃紅,直接淡掉就夠
+  socket.on('connect_error', (err) => {
+    console.error(`[Socket] ❌ connect_error: ${err.message}, type=${err.type}, code=${err.code}`);
+  });
+  socket.on('disconnect', (reason) => {
+    console.warn(`[Socket] ⚠️ disconnect: ${reason}`);
     if (_disconnectRedTimer) clearTimeout(_disconnectRedTimer);
     _disconnectRedTimer = setTimeout(() => {
       connLabel.innerHTML = '<i class="fa-solid fa-circle text-red-500 text-[8px]"></i> 連線中斷';
     }, 300);
+  });
+  socket.on('error', (err) => {
+    console.error(`[Socket] ❌ error 事件:`, err);
+  });
+  socket.on('reconnect_attempt', (attempt) => {
+    console.log(`[Socket] 重新連線嘗試 #${attempt}`);
+  });
+  socket.on('reconnect_failed', () => {
+    console.error('[Socket] ❌ 重新連線失敗 (已達嘗試上限)');
+  });
+  socket.io.on('error', (err) => {
+    console.error(`[Socket] ❌ engine.io error:`, err);
   });
 
   socket.on('sync_state', (state) => {
