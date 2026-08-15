@@ -12,6 +12,42 @@
   // ===== 元素 =====
   const video = document.getElementById('player');
 
+  // ===== 統一 Toast API (所有 TV 通知收口) =====
+  // 支援 success / error / warning / info
+  // 內部管理計時器，重複呼叫自動 reset
+  (function () {
+    let _timer = null;
+    let _el = null;
+    function ensureEl() {
+      if (!_el) {
+        _el = document.createElement('div');
+        _el.id = 'ktvToast';
+        _el.className = 'ktv-toast rounded-xl px-5 py-2.5 text-sm font-medium';
+        document.body.appendChild(_el);
+      }
+      return _el;
+    }
+    window.showToast = function (msg, kind = 'success') {
+      const icons = {
+        success: 'fa-circle-check text-green-400',
+        error: 'fa-circle-exclamation text-red-400',
+        warning: 'fa-triangle-exclamation text-amber-400',
+        info: 'fa-circle-info text-cyan-400',
+      };
+      const cls = `ktv-toast-${kind}`;
+      const el = ensureEl();
+      el.className = `ktv-toast rounded-xl px-5 py-2.5 text-sm font-medium ${cls}`;
+      el.innerHTML = `<i class="fa-solid ${icons[kind] || icons.info} mr-2"></i>${msg}`;
+      el.classList.add('show');
+      if (_timer) clearTimeout(_timer);
+      const durations = { success: 2000, error: 3500, warning: 3500, info: 2500 };
+      _timer = setTimeout(() => {
+        el.classList.remove('show');
+        _timer = null;
+      }, durations[kind] || 2500);
+    };
+  })();
+
   // ===== 雙 Audio 池 (9 分修法) =====
   // 兩個 <audio> 永遠保持 warm:iOS 對 load() 過的 element 不會凍結 session
   // - activeAudio: 當前正在播的 (handle 一切 src swap / play)
@@ -849,17 +885,7 @@ function initAudioGraph() {
 
   let _videoFallbackTried = false;
   function showVideoFallbackToast(song) {
-    let toast = document.getElementById('videoFallbackToast');
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.id = 'videoFallbackToast';
-      toast.className = 'fixed top-20 left-1/2 -translate-x-1/2 z-50 panel rounded-xl px-4 py-2 text-sm text-yellow-200';
-      toast.style.pointerEvents = 'none';
-      document.body.appendChild(toast);
-    }
-    toast.textContent = `影片 codec 不支援,改用音訊播放: ${song.title || song.id}`;
-    toast.style.display = 'block';
-    setTimeout(() => { toast.style.display = 'none'; }, 4000);
+    showToast(`影片 codec 不支援，改用音訊播放：${song.title || song.id}`, 'warning');
   }
 
 // ===== 音樂模式 (Audio-Only Mode) =====
@@ -1370,22 +1396,7 @@ async function preloadFullTrack(audioEl, src, timeoutMs = 30000) {
 // (video 元素會繼續播,但 iOS PWA 鎖屏會停 — 後續可以排 pipeline 補抽)
 let _audioModeFallbackToastTimer = null;
 function showAudioModeFallbackToast(song) {
-  let toast = document.getElementById('audioModeFallbackToast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'audioModeFallbackToast';
-    toast.className = 'fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 ' +
-      'bg-black/80 text-white px-5 py-3 rounded-xl text-base font-medium ' +
-      'shadow-2xl backdrop-blur-sm pointer-events-none transition-opacity duration-300';
-    toast.style.opacity = '0';
-    document.body.appendChild(toast);
-  }
-  toast.textContent = `「${song.title || '此歌'}」尚未預抽背景音訊，鎖屏後會停止播放`;
-  toast.style.opacity = '1';
-  clearTimeout(_audioModeFallbackToastTimer);
-  _audioModeFallbackToastTimer = setTimeout(() => {
-    toast.style.opacity = '0';
-  }, 4000);
+  showToast(`「${song.title || '此歌'}」尚未預抽背景音訊，鎖屏後會停止播放`, 'warning');
 }
 
 

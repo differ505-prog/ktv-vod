@@ -272,6 +272,40 @@
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }
+    /* 統一 toast 樣式 (error / warning / info) */
+    .ktv-toast {
+      position: fixed;
+      top: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(-30px);
+      opacity: 0;
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      pointer-events: none;
+      z-index: 9999;
+      max-width: 90vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ktv-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .ktv-toast.ktv-toast-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .ktv-toast.ktv-toast-warning {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fcd34d;
+    }
+    .ktv-toast.ktv-toast-info {
+      background: rgba(34, 211, 238, 0.12);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      color: #67e8f9;
+    }
 
     /* 沉浸模式 QR — 與 systemTitle 並排左上角,小尺寸,最少干擾 (沉浸模式前隱藏) */
     #immersiveQrModal {
