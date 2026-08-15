@@ -517,9 +517,11 @@ function scanLocalVideos() {
           audioOriginal: audioOrigExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioOrigName)}` : null,
           audioVocalOff: audioVocExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioVocName)}` : null,
           // 嘗試讀同目錄 metadata json（pipeline 產出，含 cover URL）
+          // JSON 檔名去掉 _ktv 後綴（pipeline batch_backfill.py 寫 json 時會去掉）
           cover: (() => {
             try {
-              const mp = path.join(VIDEO_DIR, `${raw}.json`);
+              const rawBase = raw.replace(/_ktv$/i, '');
+              const mp = path.join(VIDEO_DIR, `${rawBase}.json`);
               if (fs.existsSync(mp)) {
                 const m = JSON.parse(fs.readFileSync(mp, 'utf-8'));
                 return m.cover || null;
