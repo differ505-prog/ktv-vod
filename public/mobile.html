@@ -134,6 +134,83 @@
       animation: npHoldPulse 0.45s ease;
       border-color: rgba(239, 68, 68, 0.6) !important;
     }
+
+    /* ===== 歌卡視覺升級 v2 ===== */
+    .song-card {
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .song-card:hover .song-cover-wrap {
+      box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.5), 0 4px 16px rgba(236, 72, 153, 0.2);
+    }
+    .song-card:active {
+      transform: scale(0.98);
+    }
+    .song-cover-wrap {
+      transition: box-shadow 0.2s ease;
+      flex-shrink: 0;
+    }
+    .artist-tag {
+      font-size: 10px;
+      color: #f9a8d4;
+      background: rgba(236, 72, 153, 0.12);
+      border: 1px solid rgba(236, 72, 153, 0.25);
+      padding: 1px 6px;
+      border-radius: 999px;
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    /* 歌卡底部 swipe hint 線 */
+    .song-card::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* ===== Skeleton Loading ===== */
+    @keyframes shimmer {
+      0%   { background-position: -400px 0; }
+      100% { background-position: 400px 0; }
+    }
+    .skeleton {
+      background: linear-gradient(90deg,
+        rgba(255,255,255,0.04) 25%,
+        rgba(255,255,255,0.09) 50%,
+        rgba(255,255,255,0.04) 75%
+      );
+      background-size: 800px 100%;
+      animation: shimmer 1.6s ease-in-out infinite;
+      border-radius: 6px;
+    }
+    .skeleton-cover {
+      width: 52px;
+      height: 52px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .skeleton-line {
+      height: 12px;
+      border-radius: 4px;
+    }
+    .skeleton-line-sm {
+      height: 9px;
+      width: 60%;
+      border-radius: 4px;
+    }
+    /* Job 面板骨架 */
+    .job-skeleton {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      padding: 12px;
+    }
   </style>
 </head>
 <body class="overflow-x-hidden">

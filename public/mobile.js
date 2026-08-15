@@ -89,9 +89,47 @@
   // 加歌任務追蹤: jobId → { url, title, artist, status, percent, detail, error }
   const jobs = new Map();
 
+  // ===== 骨架屏 =====
+  function renderSongsSkeleton() {
+    songList.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const li = document.createElement('div');
+      li.className = 'w-full flex items-center gap-3 py-3 relative';
+      li.innerHTML = `
+        <div class="skeleton skeleton-cover flex-shrink-0"></div>
+        <div class="flex-1 min-w-0 space-y-2 py-1">
+          <div class="skeleton skeleton-line" style="width:${55 + (i % 4) * 10}%"></div>
+          <div class="skeleton skeleton-line-sm" style="width:${35 + (i % 3) * 15}%"></div>
+        </div>
+        <div class="w-8 h-8 rounded-full skeleton flex-shrink-0"></div>
+      `;
+      songList.appendChild(li);
+    }
+  }
+
+  function renderJobsSkeleton() {
+    jobsPanel.classList.remove('hidden');
+    jobsCount.textContent = '?';
+    jobsList.innerHTML = '';
+    for (let i = 0; i < 2; i++) {
+      const li = document.createElement('div');
+      li.className = 'job-skeleton';
+      li.innerHTML = `
+        <div class="flex items-start gap-2 mb-3">
+          <div class="skeleton skeleton-line" style="width:60%;height:13px"></div>
+          <div class="ml-auto skeleton" style="width:40px;height:22px;border-radius:6px"></div>
+        </div>
+        <div class="skeleton" style="height:6px;border-radius:3px;margin-bottom:8px"></div>
+        <div class="skeleton skeleton-line-sm"></div>
+      `;
+      jobsList.appendChild(li);
+    }
+  }
+
   // ===== 抓取歌曲庫 =====
   // 相對路徑 (沒開頭 /) — 容忍 Tailscale Funnel 經 /ktv/ 前綴代理
   async function fetchSongs() {
+    renderSongsSkeleton();
     try {
       const res = await fetch('api/songs');
       const data = await res.json();
@@ -101,6 +139,7 @@
       }
     } catch (e) {
       console.error('抓取歌曲庫失敗：', e);
+      songList.innerHTML = '<div class="text-center text-red-400 py-8 text-sm">載入失敗，請檢查網路</div>';
     }
   }
 
@@ -714,31 +753,26 @@ function renderNowPlaying() {
   function renderSongCard(song, opts = {}) {
     const { action = 'pick', index = null } = opts;
     const li = document.createElement('div');
-    li.className = 'w-full flex items-center gap-3 py-3 border-b border-white/5 song-card text-left';
+    li.className = 'w-full flex items-center gap-3 py-3 relative song-card text-left';
     li.dataset.songId = song.id;
 
-    // server.js 的 parseSongTitle 已淨化，直接用
     const displayTitle = song.title || '未知歌曲';
     const displayArtist = song.artist || '未知歌手';
-
     const durationStr = song.duration ? ` · ${escapeHtml(song.duration)}` : '';
-    const subtitleLine = displayArtist
-      ? `${escapeHtml(displayArtist)}${durationStr}`
-      : durationStr ? durationStr.slice(3) : '';
 
-    // 封面
+    // 封面：52x52，比之前稍大
     const coverHtml = song.cover
       ? `<img src="${escapeHtml(song.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fa-solid fa-music text-gray-500\\'></i>'" />`
       : '<i class="fa-solid fa-music text-gray-500 text-lg"></i>';
 
     const indexHtml = index !== null
-      ? `<div class="w-6 text-center text-gray-500 font-medium text-sm flex-shrink-0">${index + 1}</div>`
+      ? `<div class="w-6 text-center text-gray-500 font-medium text-sm flex-shrink-0 select-none">${index + 1}</div>`
       : '';
 
     const actionHtml = action === 'queue'
       ? `<div class="text-[10px] text-gray-500 flex-shrink-0"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
       : `<div class="flex items-center gap-1 flex-shrink-0">
-           <div class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition active:scale-90">
+           <div class="w-8 h-8 rounded-full bg-white/10 hover:bg-pink-500/30 flex items-center justify-center transition active:scale-90">
              <i class="fa-solid fa-plus text-sm text-white"></i>
            </div>
            <button class="delete-song-btn text-red-400/50 hover:text-red-300 p-2 rounded-full hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲" style="display:none;">
@@ -748,12 +782,15 @@ function renderNowPlaying() {
 
     li.innerHTML = `
       ${indexHtml}
-      <div class="w-12 h-12 rounded-lg overflow-hidden bg-[#282828] flex items-center justify-center flex-shrink-0">
+      <div class="song-cover-wrap w-[52px] h-[52px] rounded-xl overflow-hidden bg-[#282828] flex items-center justify-center flex-shrink-0">
         ${coverHtml}
       </div>
       <div class="flex-1 min-w-0 overflow-hidden">
         <div class="text-white text-sm font-medium truncate leading-snug">${escapeHtml(displayTitle)}</div>
-        <div class="text-gray-400 text-xs truncate mt-0.5">${escapeHtml(subtitleLine)}</div>
+        <div class="flex items-center gap-1.5 mt-1">
+          <span class="artist-tag">${escapeHtml(displayArtist)}</span>
+          ${durationStr ? `<span class="text-gray-500 text-[10px]">${escapeHtml(durationStr)}</span>` : ''}
+        </div>
       </div>
       ${actionHtml}
     `;
@@ -1453,6 +1490,7 @@ function attachLibraryCardLongPress(li, song) {
 
   function startJobsPolling() {
     if (jobsPollTimer) return;
+    renderJobsSkeleton();
     pollJobs();
     jobsPollTimer = setInterval(pollJobs, 1500);
   }
