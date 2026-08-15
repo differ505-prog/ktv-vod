@@ -620,7 +620,7 @@ function initAudioGraph() {
     clearTimeout(hideCountdownTimer);
     shownThresholds = new Set(); // 防止过渡期间 callback 仍觸發顯示
     lastReportedRemaining = Infinity;
-    nextSongCard.style.opacity = '0';
+    nextSongCard.classList.remove('show');
     // 顯示黑幕，隱藏待機畫面
     standbyScreen.style.display = 'none';
     transitionOverlay.style.opacity = '1';
@@ -783,7 +783,7 @@ function initAudioGraph() {
     clearTimeout(hideCountdownTimer);
     shownThresholds = new Set();
     lastReportedRemaining = Infinity;
-    nextSongCard.style.opacity = '0';
+    nextSongCard.classList.remove('show');
 
     countdownInterval = setInterval(() => {
       // 需要有效 duration 且影片正在播
@@ -791,7 +791,7 @@ function initAudioGraph() {
       const remaining = video.duration - video.currentTime;
       if (remaining <= 0 || remaining > video.duration) {
         clearInterval(countdownInterval);
-        nextSongCard.style.opacity = '0';
+        nextSongCard.classList.remove('show');
         return;
       }
       // 每秒（實際剩餘時間變化）才處理，避免過度觸發
@@ -817,11 +817,11 @@ function initAudioGraph() {
       nextSongCardArtist.textContent = nextSong.artist || '—';
     }
     nextSongCountdownNum.textContent = secondsLeft;
-    nextSongCard.style.opacity = '1';
+    nextSongCard.classList.add('show');
 
     clearTimeout(hideCountdownTimer);
     hideCountdownTimer = setTimeout(() => {
-      nextSongCard.style.opacity = '0';
+      nextSongCard.classList.remove('show');
     }, 4000);
   }
 
@@ -1782,6 +1782,27 @@ async function unlockAudioPlayback() {
   // ===== PWA Service Worker 註冊 =====
   // iOS Safari 加入主畫面後背景播放音訊;Android Chrome 同樣支援。
   // 失敗不影響主功能 (背景音樂仍可在 user 停留在頁面時運作)。
+  // ===== 待機畫面浮動音符粒子 =====
+  (function initAmbientParticles() {
+    const container = document.getElementById('ambientParticles');
+    if (!container) return;
+    const notes = ['♪', '♫', '♬', '🎵', '🎶'];
+    const COUNT = 14;
+    for (let i = 0; i < COUNT; i++) {
+      const el = document.createElement('div');
+      el.className = 'ambient-note';
+      el.textContent = notes[Math.floor(Math.random() * notes.length)];
+      el.style.left = `${Math.random() * 100}%`;
+      el.style.fontSize = `${0.8 + Math.random() * 0.8}rem`;
+      el.style.color = Math.random() > 0.5
+        ? 'rgba(236, 72, 153, 0.12)'
+        : 'rgba(139, 92, 246, 0.10)';
+      el.style.animationDuration = `${8 + Math.random() * 10}s`;
+      el.style.animationDelay = `${-Math.random() * 18}s`;
+      container.appendChild(el);
+    }
+  })();
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js').catch((err) => {

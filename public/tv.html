@@ -171,6 +171,44 @@
     #systemTitle,
     #standbyScreen {
       transition: opacity 0.6s ease, transform 0.6s ease;
+      background: radial-gradient(ellipse at 50% 60%, rgba(236, 72, 153, 0.08) 0%, transparent 60%),
+                  radial-gradient(ellipse at 20% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+                  radial-gradient(ellipse at 80% 30%, rgba(59, 130, 246, 0.05) 0%, transparent 50%);
+      animation: ambient-bg 8s ease-in-out infinite alternate;
+    }
+    @keyframes ambient-bg {
+      0%   { background-position: 0% 50%; filter: hue-rotate(0deg); }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; filter: hue-rotate(15deg); }
+    }
+    /* 待機畫面 — 浮動音符粒子 */
+    .ambient-particles {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 0;
+    }
+    .ambient-note {
+      position: absolute;
+      color: rgba(236, 72, 153, 0.15);
+      font-size: 1.2rem;
+      animation: float-note linear infinite;
+    }
+    @keyframes float-note {
+      0%   { transform: translateY(105vh) rotate(0deg); opacity: 0; }
+      8%   { opacity: 1; }
+      85%  { opacity: 0.6; }
+      100% { transform: translateY(-10vh) rotate(30deg); opacity: 0; }
+    }
+    .standby-content { position: relative; z-index: 1; }
+    /* QR 區微光 */
+    #qrCode {
+      animation: qr-breathe 4s ease-in-out infinite;
+    }
+    @keyframes qr-breathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0); }
+      50%       { box-shadow: 0 0 24px 6px rgba(236, 72, 153, 0.15); }
     }
     body.immersive #immersiveBtn {
       opacity: 0;
@@ -307,6 +345,25 @@
       color: #67e8f9;
     }
 
+    /* 下一首卡片動畫 */
+    #nextSongCard {
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.6) 0%, transparent 70%);
+    }
+    #nextSongCard.show .panel {
+      animation: next-card-entrance 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    @keyframes next-card-entrance {
+      0%   { transform: scale(0.7); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    #nextSongCountdownNum {
+      animation: countdown-pulse 1s ease-in-out infinite;
+    }
+    @keyframes countdown-pulse {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.15); }
+    }
+
     /* 沉浸模式 QR — 與 systemTitle 並排左上角,小尺寸,最少干擾 (沉浸模式前隱藏) */
     #immersiveQrModal {
       display: none;
@@ -419,9 +476,10 @@
     </div>
   </div>
 
-  <!-- 中央 loading 提示 (待機畫面) -->
+  <!-- 待機畫面 -->
   <div id="standbyScreen" class="fixed inset-0 flex items-center justify-center pointer-events-none">
-    <div class="text-center">
+    <div class="ambient-particles" id="ambientParticles"></div>
+    <div class="standby-content text-center">
       <div class="text-7xl mb-6 standby-emoji">🎤</div>
       <h1 class="text-5xl font-bold glow-text mb-3">KTV 點歌系統</h1>
       <p class="text-pink-300 text-sm font-medium tracking-widest mb-4">POWERED BY COUCHMIC</p>
