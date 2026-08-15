@@ -1,13 +1,16 @@
 {
-  "_comment": "中央 Tailscale Funnel 清單（2026-08-12 修憲：KTV 獨立，經 Node.js proxy :8444，不走 funnel）。",
+  "_comment": "中央 Tailscale Funnel 清單（2026-08-12 修憲：KTV 經 Node.js proxy :8444）。",
   "_format": "port:target_url",
   "_design_2026-08-12": [
-    "KTV: Node.js proxy :8444 (獨立 HTTPS 出口，TLS 用 Tailscale cert)",
+    "KTV: `https://vibe-nas.taila67710.ts.net:8444/` (Node.js proxy :8444 → nginx :3003 → KTV :3001)",
     "FlowSight: :443 funnel → nginx :8889 → flowsight :8888",
-    "WorldMonitor: :10000 funnel → HA :8081"
+    "WorldMonitor: :10000 funnel → HA :8081",
+    "Jellyfin: :8443 funnel → Jellyfin :8096"
   ],
   "funnels": [
+    { "port": 8444,  "target": "http://localhost:8444", "owner": "ktv-https-proxy",    "url": "https://vibe-nas.taila67710.ts.net:8444/" },
     { "port": 443,   "target": "http://localhost:8889", "owner": "flowsight-funnel-proxy", "url": "https://vibe-nas.taila67710.ts.net/" },
-    { "port": 10000, "target": "http://localhost:8081", "owner": "worldmonitor",             "url": "https://vibe-nas.taila67710.ts.net:10000/" }
+    { "port": 10000, "target": "http://localhost:8081", "owner": "worldmonitor",             "url": "https://vibe-nas.taila67710.ts.net:10000/" },
+    { "port": 8443,  "target": "http://localhost:8096", "owner": "jellyfin",                   "url": "https://vibe-nas.taila67710.ts.net:8443/" }
   ]
 }

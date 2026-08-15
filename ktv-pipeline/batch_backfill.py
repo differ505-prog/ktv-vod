@@ -32,6 +32,32 @@ from metadata import (
     write_metadata_file,
 )
 
+
+def _search_youtube_thumbnail(search_query: str, timeout: float = 5.0) -> str | None:
+    """
+    用 yt-dlp --default-search 搜尋，取第一個結果的 thumbnail URL。
+    失敗 / 無結果 → 回 None。
+    """
+    try:
+        import yt_dlp
+        query = f"ytsearch1:{search_query}"
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "default_search": "ytsearch1",
+            "skip_download": True,
+            "extract_flat": False,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+        if info and "entries" in info:
+            entry = info["entries"][0]
+            thumb = entry.get("thumbnail") if entry else None
+            return (thumb or "").strip() or None
+    except Exception:
+        pass
+    return None
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s %(message)s",
@@ -60,11 +86,11 @@ def _ffprobe_duration(mp4_path: Path) -> int | None:
     return None
 
 
-def build_from_filename(mp4_path: Path) -> SongMetadata:
+def build_from_filename(mp4_path: Path, fetch_cover: bool = True) -> SongMetadata:
     """
     用 _ktv.mp4 的檔名推 metadata:
        周杰倫_夜曲_ktv.mp4 -> title=夜曲, artist=周杰倫
-       周杰倫 - 夜曲_ktv.mp4 -> title=夜曲, artist=周杰倫
+    fetch_cover=True 時，發起 YouTube 搜尋抓 thumbnail URL。
     """
     stem = mp4_path.stem.replace("_ktv", "").replace("_vocal_off", "")
 
@@ -75,13 +101,19 @@ def build_from_filename(mp4_path: Path) -> SongMetadata:
 
     duration_s = _ffprobe_duration(mp4_path)
 
+    # 嘗試抓 YouTube 封面
+    cover_url = None
+    if fetch_cover:
+        search_q = f"{parsed_artist} {parsed_title}" if parsed_artist else parsed_title
+        cover_url = _search_youtube_thumbnail(search_q)
+
     return SongMetadata(
         title=parsed_title,
         artist=parsed_artist,
         raw_title=stem,
         channel=None,
         album=None,
-        cover=None,
+        cover=cover_url,
         duration=duration_s,
         pinyin_title=to_pinyin(parsed_title),
         pinyin_artist=to_pinyin(parsed_artist) if parsed_artist else "",
@@ -90,7 +122,7 @@ def build_from_filename(mp4_path: Path) -> SongMetadata:
     )
 
 
-def main(processed_dir: str | os.PathLike, dry_run: bool = False) -> int:
+def main(processed_dir: str | os.PathLike, dry_run: bool = False, fetch_cover: bool = True) -> int:
     p = Path(processed_dir)
     if not p.exists():
         log.error(f"目錄不存在: {p}")
@@ -122,7 +154,7 @@ def main(processed_dir: str | os.PathLike, dry_run: bool = False) -> int:
             continue
 
         try:
-            metadata = build_from_filename(mp4)
+            metadata = build_from_filename(mp4, fetch_cover=fetch_cover)
             if dry_run:
                 log.info(f"[dry-run] {mp4.name} → title={metadata.title!r}, artist={metadata.artist!r}")
             else:
@@ -149,9 +181,10 @@ def main(processed_dir: str | os.PathLike, dry_run: bool = False) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("用法: python batch_backfill.py <processed_dir> [--dry-run]")
+        print("用法: python batch_backfill.py <processed_dir> [--dry-run] [--no-fetch-cover]")
         sys.exit(1)
 
     dry = "--dry-run" in sys.argv
+    fetch_cover = "--no-fetch-cover" not in sys.argv
     target = sys.argv[1]
-    sys.exit(main(target, dry_run=dry))
+    sys.exit(main(target, dry_run=dry, fetch_cover=fetch_cover))

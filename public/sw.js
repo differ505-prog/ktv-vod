@@ -1,6 +1,10 @@
 /** CouchMic TV PWA service worker. Keep media/API/socket requests network-only. */
-const CACHE = 'couchmic-tv-v2';
-const APP_SHELL = ['/', '/tv.html', '/tv.js', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'couchmic-v10';
+const APP_SHELL = [
+  '/tv.html', '/tv.js',
+  '/mobile.html', '/mobile.js',
+  '/manifest.json', '/icon-192.png', '/icon-512.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
@@ -16,9 +20,9 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin ||
-      url.pathname.startsWith('/audio/') || url.pathname.startsWith('/videos/') ||
-      url.pathname.startsWith('/tv-videos/') || url.pathname.startsWith('/tv-videos-no-range/') ||
-      url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
+      url.pathname.includes('/audio/') || url.pathname.includes('/videos/') ||
+      url.pathname.includes('/tv-videos/') || url.pathname.includes('/tv-videos-no-range/') ||
+      url.pathname.includes('/api/') || url.pathname.includes('/socket.io/')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then((response) => {
