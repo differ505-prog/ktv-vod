@@ -494,8 +494,8 @@ function scanLocalVideos() {
         const raw = path.basename(f, path.extname(f));
         // 跳過已經是 vocal_off 變體，避免在 library 重複出現
         if (/_vocal_off$/.test(raw)) continue;
-        // mp4 結尾常有 _ktv 後綴，但 m4a 通常不帶此後綴 → 先去掉再找 m4a
-        const rawForAudio = raw.replace(/_ktv$/, '');
+        // mp4 結尾常有 _ktv 後綴，現在 m4a 也要對齊此後綴 (2026-08-09 migration)
+        const rawForAudio = raw;
         // 用 parseSongTitle 淨化檔名 → { title, artist }
         const { title, artist } = parseSongTitle(raw);
         // 若對應的 *_vocal_off.mp4 存在，就帶 srcVocalOff 給 TV 切換
@@ -516,7 +516,17 @@ function scanLocalVideos() {
           // PWA 背景音訊:若有 .m4a 就提供 URL,iOS 鎖屏播放用
           audioOriginal: audioOrigExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioOrigName)}` : null,
           audioVocalOff: audioVocExists ? `${AUDIO_URL_PREFIX}/${encodeURIComponent(audioVocName)}` : null,
-          cover: null,
+          // 嘗試讀同目錄 metadata json（pipeline 產出，含 cover URL）
+          cover: (() => {
+            try {
+              const mp = path.join(VIDEO_DIR, `${raw}.json`);
+              if (fs.existsSync(mp)) {
+                const m = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+                return m.cover || null;
+              }
+            } catch (_) {}
+            return null;
+          })(),
           source: 'local',
         });
       }
@@ -682,8 +692,9 @@ function rebuildLibrary() {
     // 已在 playlist / 正在播 → 跳過
     if (playlist.some((s) => s.id === libSong.id)) continue;
     if (currentSong && currentSong.id === libSong.id) continue;
-    // 重新確認 m4a 是否到位（mp4 結尾的 _ktv 後綴 m4a 通常不帶）
-    const raw = path.basename(basename, path.extname(basename)).replace(/_ktv$/, '');
+    // 重新確認 m4a 是否到位（mp4 結尾的 _ktv 後綴，現在 m4a 也有對齊此後綴）
+    const filename = decodeURIComponent(libSong.src.split('/').pop());
+    const raw = path.basename(filename, path.extname(filename));
     const audioOrigExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}.m4a`));
     const audioVocExists = fs.existsSync(path.join(AUDIO_DIR, `${raw}-vocal-off.m4a`));
     const vocalOffMp4Exists = fs.existsSync(path.join(VIDEO_DIR, `${raw}_vocal_off.mp4`));

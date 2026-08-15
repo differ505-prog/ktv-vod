@@ -27,6 +27,8 @@ from typing import Optional
 
 import yt_dlp
 
+from metadata import SongMetadata, write_metadata_file, parse_yt_title
+
 # Demucs 音源分離
 try:
     from demucs.pretrained import get_model
@@ -171,11 +173,11 @@ def check_ffmpeg() -> bool:
     return False
 
 
-def get_video_title(url: str) -> tuple[str, str]:
+def get_video_title(url: str) -> tuple[str, str, dict]:
     """
     使用 yt-dlp 解析 YouTube URL，取得原始標題與安全檔名。
 
-    回傳：(raw_title, sanitized_name)
+    回傳：(raw_title, sanitized_name, yt_info_dict)
     """
     logger.info(f"[ yt-dlp ] 正在解析影片資訊：{url}")
     ydl_opts = {
@@ -192,7 +194,7 @@ def get_video_title(url: str) -> tuple[str, str]:
         sanitized = sanitize_filename(raw_title)
         logger.info(f"[ yt-dlp ] 標題：{raw_title}")
         logger.info(f"[ yt-dlp ] 安全檔名：{sanitized}")
-        return raw_title, sanitized
+        return raw_title, sanitized, info
 
 
 # ============================================================
@@ -810,7 +812,7 @@ def process_ktv_video(
     logger.info(f"[URL]  {youtube_url}")
     logger.info(f"[輸出]  {output_dir}")
 
-    _, sanitized_name = get_video_title(youtube_url)
+    _, sanitized_name, yt_info = get_video_title(youtube_url)
 
     final_file = output_path / f"{sanitized_name}_ktv.mp4"
     if check_file_exists(final_file):
@@ -866,6 +868,27 @@ def process_ktv_video(
         except Exception as e:
             # m4a 抽取失敗不影響主流程 (mp4 還在,user 仍可看)
             logger.warning(f"[PWA-Audio] 抽出失敗（不影響主流程）: {e}")
+
+        # ===== 寫 metadata json（含 cover URL）=====
+        try:
+            title_str, artist_str = parse_yt_title(raw_title)
+            yt_cover = (yt_info.get("thumbnail") or "").strip() or None
+            meta = SongMetadata(
+                title=title_str,
+                artist=artist_str,
+                raw_title=raw_title,
+                channel=yt_info.get("uploader") or None,
+                album=None,
+                cover=yt_cover,
+                duration=int(yt_info.get("duration") or 0) or None,
+                pinyin_title="",
+                pinyin_artist="",
+                youtube_id=yt_info.get("id") or None,
+                source="local",
+            )
+            write_metadata_file(meta, output_path, sanitized_name)
+        except Exception as e:
+            logger.warning(f"[metadata] 寫入失敗（不影響主流程）: {e}")
 
         logger.info("=" * 50)
         logger.info("Pipeline 完成！")

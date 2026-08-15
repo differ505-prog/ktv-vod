@@ -173,7 +173,7 @@ def sanitize_filename(title: str) -> str:
     """
     title = title.replace("\u3000", " ").replace("\u00A0", " ")
 
-    unsafe_chars = r'[|\\/:*?"<>*\x00-\x1f]'
+    unsafe_chars = r'[|\\/:*?"<>#%\x00-\x1f]'  # #/&/% 會被 URL parser / fs 解讀為特殊 token
     clean = re.sub(unsafe_chars, "", title)
 
     emoji_classes = (
