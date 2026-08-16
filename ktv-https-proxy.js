@@ -3,6 +3,7 @@ const http = require('http');
 const FUNNEL_PORT = 8444;
 const BACKEND_PORT = 3001;
 const BACKEND_HOST = '127.0.0.1';
+const PATH_PREFIX = '/ktv'; // mirrors old nginx /ktv/ prefix routing
 
 // ── Port Guard: 确保 8444 没被别的进程抢走 ──────────────────────────────
 const net = require('net');
@@ -31,7 +32,9 @@ function startProxy() {
     const options = {
       host: BACKEND_HOST,
       port: BACKEND_PORT,
-      path: req.url,
+      path: req.url.startsWith(PATH_PREFIX)
+        ? req.url.slice(PATH_PREFIX.length) || '/'
+        : req.url,
       method: req.method,
       headers: { ...req.headers, 'X-Forwarded-For': req.socket.remoteAddress }
     };
