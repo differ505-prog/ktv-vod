@@ -623,9 +623,9 @@ function initAudioGraph() {
     lastReportedRemaining = Infinity;
     nextSongCard.classList.remove('show');
     // 顯示黑幕，隱藏待機畫面
+    // 注意: 不設 pointerEvents='auto'，否則會擋住 unlockOverlay 的點擊事件
     standbyScreen.style.display = 'none';
     transitionOverlay.style.opacity = '1';
-    transitionOverlay.style.pointerEvents = 'auto';
     // 預載下一首影片（取 playlist 第一首，src 相同則復用已緩衝內容）
     if (nextSong && nextSong.src) {
       preloadedNextSrc = nextSong.src.startsWith('/videos/')
