@@ -284,6 +284,7 @@ document.addEventListener('visibilitychange', () => {
   let fadeTimer = null;
   let immersiveMode = false;
   let currentTvSyncOffset = 0; // 用於強制重新整理快取的變數
+  let preloadedNextSrc = null; // 預載下一首的 src，stop_song 時賦值，playSong 時復用
   let audioCtx = null;
   let sourceNode = null;
   let splitter = null;
@@ -625,6 +626,14 @@ function initAudioGraph() {
     standbyScreen.style.display = 'none';
     transitionOverlay.style.opacity = '1';
     transitionOverlay.style.pointerEvents = 'auto';
+    // 預載下一首影片（取 playlist 第一首，src 相同則復用已緩衝內容）
+    if (nextSong && nextSong.src) {
+      preloadedNextSrc = nextSong.src.startsWith('/videos/')
+        ? nextSong.src.replace('/videos/', '/tv-videos/') + `?offset=${currentTvSyncOffset}`
+        : nextSong.src;
+      const preloadImg = new Image();
+      preloadImg.src = preloadedNextSrc;
+    }
   });
 
   // 音軌切換
@@ -744,8 +753,16 @@ function initAudioGraph() {
     // 已經解鎖了 → 一切照舊
     initAudioGraph(); // build/restore graph (若是首次播放)
 
-    console.log('[playSong] 設定 src =', tvSrc);
-    video.src = tvSrc;
+    // 檢查是否已有預載（stop_song 時已 fetch），復用已緩衝的 src
+    let effectiveSrc = tvSrc;
+    if (preloadedNextSrc && tvSrc.startsWith(preloadedNextSrc.split('?')[0])) {
+      effectiveSrc = preloadedNextSrc;
+      console.log('[playSong] 復用預載 src:', effectiveSrc);
+      preloadedNextSrc = null; // 用過即清除
+    }
+
+    console.log('[playSong] 設定 src =', effectiveSrc);
+    video.src = effectiveSrc;
     video.loop = false;
 
     // 不等 canplay — 直接嘗試播。失敗了再說。
@@ -875,12 +892,9 @@ function initAudioGraph() {
         return; // 不走 1.5s 強制 ended
       }
     }
-    // 1.5s 延遲防呆：給緩衝最後一次恢復機會,沒成功就 forced ended
-    setTimeout(() => {
-      if (!_songEndedEmitted) {
-        _emitSongEnded();
-      }
-    }, 1500);
+    // 立即通知後端切歌（不再等緩衝恢復）
+    if (!_songEndedEmitted) {
+      _emitSongEnded();
   });
 
   let _videoFallbackTried = false;
