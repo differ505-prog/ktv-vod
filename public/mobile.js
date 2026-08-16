@@ -96,7 +96,7 @@
       const li = document.createElement('div');
       li.className = 'w-full flex items-center gap-3 py-3 relative';
       li.innerHTML = `
-        <div class="skeleton skeleton-cover flex-shrink-0"></div>
+        <div class="skeleton skeleton-cover rounded-2xl" style="width:60px;height:60px;flex-shrink:0"></div>
         <div class="flex-1 min-w-0 space-y-2 py-1">
           <div class="skeleton skeleton-line" style="width:${55 + (i % 4) * 10}%"></div>
           <div class="skeleton skeleton-line-sm" style="width:${35 + (i % 3) * 15}%"></div>
@@ -769,31 +769,33 @@ function renderNowPlaying() {
       ? `<div class="w-6 text-center text-gray-500 font-medium text-sm flex-shrink-0 select-none">${index + 1}</div>`
       : '';
 
-    const actionHtml = action === 'queue'
-      ? `<div class="text-[10px] text-gray-500 flex-shrink-0"><i class="fa-solid fa-user"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
-      : `<div class="flex items-center gap-1 flex-shrink-0">
-           <div class="w-8 h-8 rounded-full bg-white/10 hover:bg-pink-500/30 flex items-center justify-center transition active:scale-90">
-             <i class="fa-solid fa-plus text-sm text-white"></i>
-           </div>
-           <button class="delete-song-btn text-red-400/50 hover:text-red-300 p-2 rounded-full hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲" style="display:none;">
-             <i class="fa-solid fa-trash-can text-sm"></i>
-           </button>
-         </div>`;
+    const actionHtml = null; // kept for attachSongCardHandlers reference
 
     li.innerHTML = `
       ${indexHtml}
-      <div class="song-cover-wrap w-[52px] h-[52px] rounded-xl overflow-hidden bg-[#282828] flex items-center justify-center flex-shrink-0">
+      <div class="song-cover-wrap w-[60px] rounded-2xl bg-[#282828] flex items-center justify-center flex-shrink-0">
         ${coverHtml}
       </div>
-      <div class="flex-1 min-w-0 overflow-hidden">
-        <div class="text-white text-sm font-medium truncate leading-snug">${escapeHtml(displayTitle)}</div>
-        <div class="flex items-center gap-1.5 mt-1">
-          <span class="artist-tag">${escapeHtml(displayArtist)}</span>
-          ${durationStr ? `<span class="text-gray-500 text-[10px]">${escapeHtml(durationStr)}</span>` : ''}
+      <div class="flex-1 min-w-0 overflow-hidden flex items-center">
+        <div class="flex-1 min-w-0 overflow-hidden">
+          <div class="text-white text-sm font-semibold truncate leading-snug mb-0.5">${escapeHtml(displayTitle)}</div>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="artist-tag flex-shrink-0">${escapeHtml(displayArtist)}</span>
+            ${durationStr ? `<span class="text-gray-500 text-[10px] flex-shrink-0">${escapeHtml(durationStr)}</span>` : ''}
+          </div>
         </div>
       </div>
-      ${actionHtml}
-    `;
+      ${action === 'queue'
+        ? `<div class="flex items-center gap-1 flex-shrink-0 ml-2 text-[10px] text-gray-500"><i class="fa-solid fa-user text-[8px]"></i> ${escapeHtml(song.addedBy || '匿名')}</div>`
+        : `<div class="flex items-center gap-1 flex-shrink-0 ml-2">
+             <div class="w-8 h-8 rounded-full bg-white/10 hover:bg-pink-500/30 flex items-center justify-center transition active:scale-90 cursor-pointer">
+               <i class="fa-solid fa-plus text-sm text-white"></i>
+             </div>
+             <button class="delete-song-btn text-red-400/50 hover:text-red-300 p-1.5 rounded-full hover:bg-red-500/20 transition flex-shrink-0" title="刪除歌曲" style="display:none;">
+               <i class="fa-solid fa-trash-can text-sm"></i>
+             </button>
+           </div>`
+      }`;
 
   if (action === 'queue') {
     // 佇列卡不能點
@@ -1290,8 +1292,9 @@ function renderSongsByArtist(filtered) {
 
 function attachSongCardHandlers(li, song) {
   li.addEventListener('click', (e) => {
-    // 點到刪除按鈕不觸發點歌
+    // 點到 + / 刪除按鈕不觸發點歌
     if (e.target.closest('.delete-song-btn')) return;
+    if (e.target.closest('.fa-plus')) return;
     pickSong(song.id);
   });
   // 刪除按鈕事件代理
