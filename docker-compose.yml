@@ -33,6 +33,11 @@ services:
       - DEMUCS_FORCE_CPU=${DEMUCS_FORCE_CPU:-false}
       - PUBLIC_HOST=${PUBLIC_HOST:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      # 2026-09-14 修復: 容器內以 root 跑,放棄降權 ktv。
+      # 原因見 scripts/entrypoint.sh 註解 — host mergerfs FUSE 拒絕 ktv 存取 /ktv-data。
+      # 用 entrypoint override 跳過 Dockerfile 內建的 entrypoint.sh (它會把 cmd 帶到 gosu ktv)
+      # 改成直接以 container default user (root) 跑 node,等 host mergerfs 重建後再切回。
+    entrypoint: ["node", "server.js"]
     volumes:
       # 影片資料來源 (處理完成的 mp4)
       - ktv-data:/ktv-data
