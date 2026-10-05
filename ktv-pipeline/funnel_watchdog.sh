@@ -43,6 +43,18 @@ log() {
 
 check_ktv() {
     local rc=0
+    local lcode
+    lcode="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "$KTV_LOCAL" || echo 000)"
+    if [[ "$lcode" != "200" ]]; then
+        log "FAIL(local): $KTV_LOCAL -> $lcode, attempting docker compose up -d"
+        (cd /home/vibe/ktv-vod && docker compose up -d) || true
+        sleep 3
+        lcode="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "$KTV_LOCAL" || echo 000)"
+        if [[ "$lcode" != "200" ]]; then
+            log "FAIL(local still): $KTV_LOCAL -> $lcode"
+            rc=1
+        fi
+    fi
     for url in "${KTV_URLS[@]}"; do
         local code
         code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$url" || echo 000)"
@@ -51,12 +63,6 @@ check_ktv() {
             rc=1
         fi
     done
-    local lcode
-    lcode="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "$KTV_LOCAL" || echo 000)"
-    if [[ "$lcode" != "200" ]]; then
-        log "FAIL(local): $KTV_LOCAL -> $lcode"
-        rc=1
-    fi
     return $rc
 }
 

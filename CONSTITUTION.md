@@ -58,48 +58,30 @@
 
 | 用途 | URL | 對應 |
 |---|---|---|
-| **KTV** | `https://vibe-nas.taila67710.ts.net:8444/ktv/` | Node.js proxy `:8444` → nginx `:3003` → KTV `:3001` |
-| FlowSight | `https://vibe-nas.taila67710.ts.net/` | nginx `:443` → flowsight `:8888` |
-| Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | Tailscale Funnel → host `:8096` |
-| worldmonitor | `https://vibe-nas.taila67710.ts.net:10000/` | Tailscale Funnel → host `:8081` |
+| **KTV** | `https://vibe-nas.taila67710.ts.net:8444/ktv/` | Tailscale Funnel `:8444` → nginx `:8889` → KTV `:3001` |
+| FlowSight | `https://vibe-nas.taila67710.ts.net/` | Tailscale Funnel `:443` → nginx `:8889` → flowsight `:8888` |
+| Jellyfin | `https://vibe-nas.taila67710.ts.net:8443/` | Tailscale Funnel `:8443` → host `:8096` |
+| HomeAssistant | `https://vibe-nas.taila67710.ts.net:10000/` | Tailscale Funnel `:10000` → host `:8123` |
+| qBittorrent | `https://vibe-nas.taila67710.ts.net:8445/` | Tailscale Funnel `:8445` → host `:8088` |
+| Radarr | `https://vibe-nas.taila67710.ts.net:8446/` | Tailscale Funnel `:8446` → host `:7878` |
 
-### 6.2 設定指令（sudo）
-
-```bash
-# 一次性：讓當前使用者能改 tailscale serve config
-echo '05050505' | sudo -S tailscale set --operator=$(whoami)
-
-# 設定流程（2026-08-12 新架構）：
-# 1. KTV nginx on :3003 (http, via /ktv/ path)
-# 2. Node.js HTTPS proxy on :8444 (TLS termination, uses Tailscale certs)
-# 3. FlowSight nginx on :443 (獨立的 stream nginx, 已有)
-# 各自獨立，不互相覆蓋
-
-# 加 worldmonitor Funnel（占 10000）
-echo '05050505' | sudo -S tailscale funnel --bg --https=10000 http://localhost:8081
-
-# 檢視
-tailscale serve status
-```
-
-### 6.2.1 KTV HTTPS Proxy 架構（2026-08-12）
+### 6.2 統一架構（2026-10-05 修憲確立）
 
 ```
-外網:8444/ktv/  →  Node.js (TLS, Tailscale cert)  →  nginx :3003  →  KTV :3001
-                          ↓
-                   /tmp/ts-cert.{key,crt}
-                   (由 sudo 從 /var/lib/tailscale/certs/ 複製)
+外網請求 (:8444 或 :443)
+       │
+       ▼ (TLS Termination 由 Tailscale Funnel 處理)
+Tailscale Funnel
+       │
+       ▼ (轉發至本機 HTTP)
+Nginx (:8889) [/home/vibe/FlowSight/logs/nginx-tunnel-funnel.conf]
+       ├── location /ktv/ ──► rewrite / ──► KTV Brain (Docker :3001)
+       └── location /     ──► FlowSight (:8888)
 ```
 
-- 腳本: `ktv-https-proxy.js` (在 ktv-vod 專案)
-- systemd service: `ktv-https-proxy.service` (在 `~/.config/systemd/user/`)
-- 部署: `deploy_ktv_proxy.sh`
-- 修復後重啟: `systemctl --user restart ktv-https-proxy`
-
-### 6.3 重要約束
-
-- KTV 用 Node.js proxy 在 `:8444`，FlowSight 用 nginx stream 在 `:443`，**兩者完全獨立**。
-- flowsight 的 nginx 沒有 stream module，無法在 443 內加 KTV 路由，所以用 Node.js proxy 作為獨立入口。
+- **禁止再啟動 `ktv-https-proxy.service`**：該舊服務會搶佔 `0.0.0.0:8444`，阻止 Tailscaled 綁定 IPv4 監聽，導致外網 TLS 握手錯誤（`wrong version number`）。
+- **全部 Funnel 規則統一由 `ktv-pipeline/funnel_manifest.json` 與 `ktv-pipeline/funnel_manager.sh` 管理**。
+- **Watchdog 自動自癒**：`funnel_watchdog.sh` 偵測到本機 3001 離線時會自動觸發 `docker compose up -d` 重啟 KTV 容器。
 
 ### 6.3.1 Funnel watchdog（2026-08-07 修憲）
 

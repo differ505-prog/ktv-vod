@@ -14,6 +14,10 @@
 # 設計: 2026-08-08 修憲, 根治 tunnel watchdog 互踩。
 # 2026-08-12 修憲: KTV 從 funnel 分離，經 Node.js proxy :8444 獨立出口。
 # funnel_manager.sh 只管理 flowsight (:443) 和 worldmonitor (:10000) 兩個 funnel。
+# 2026-09-05 修憲: 支援 manifest 的 mode 欄位 (funnel | serve)，
+#   - funnel = tailscale funnel (對外)
+#   - serve  = tailscale serve  (tailnet 內)
+#   預設 mode=funnel 向後相容。
 # =========================================================
 set -euo pipefail
 
@@ -21,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/funnel_manifest.json"
 LOCK_FILE="/var/run/funnel-manager.lock"
 # 2026-08-09 修憲：log 改用 user-writable 路徑（vibe 無法寫 /var/log/）
-LOG_FILE="$HOME/funnel-manager.log"
+LOG_FILE="${HOME:-/home/vibe}/funnel-manager.log"
 
 log() {
     local ts
@@ -47,7 +51,8 @@ ENTRIES=$(python3 - "$MANIFEST" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 for f in m["funnels"]:
-    print(f"{f['port']}|{f['target']}|{f['url']}")
+    mode = f.get("mode", "funnel")
+    print(f"{f['port']}|{mode}|{f['target']}|{f['url']}")
 PY
 )
 [[ -n "$ENTRIES" ]] || { log "FATAL: manifest 是空的"; exit 1; }
@@ -59,13 +64,13 @@ check_one() {
     # arg: "url"
     local url="$1"
     local code
-    code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$url" || echo 000)"
+    code="$(curl -sS -L -o /dev/null -w "%{http_code}" --max-time 8 "$url" || echo 000)"
     [[ "$code" == "200" ]]
 }
 
 do_check() {
     local rc=0
-    while IFS='|' read -r port target url; do
+    while IFS='|' read -r port mode target url; do
         if check_one "$url"; then
             log "  OK   :$port  $url"
         else
@@ -85,8 +90,8 @@ do_rebuild() {
         local hijack_detected=0
         while IFS= read -r line; do
             local p t
-            p="$(echo "$line" | grep -oE "https://[a-zA-Z0-9.-]+:[0-9]+" | head -1 | awk -F: '{print $NF}')"
-            t="$(echo "$line" | grep -oE "proxy http://[^ ]+" | awk '{print $NF}')"
+            p="$(echo "$line" | grep -oE "https://[a-zA-Z0-9.-]+:[0-9]+" | head -1 | awk -F: '{print $NF}' || true)"
+            t="$(echo "$line" | grep -oE "proxy http://[^ ]+" | awk '{print $NF}' || true)"
             # 檢查 (port, target) 是否在 manifest 裡
             if [ -n "$p" ] && [ -n "$t" ] && ! echo "$ENTRIES" | grep -q "^${p}|${t}|"; then
                 log "HIJACK_DETECTED port=$p target=$t (not in manifest) - rebuild 將會清掉"
@@ -98,15 +103,29 @@ do_rebuild() {
         fi
     fi
 
+    # ── 防衛性編程：檢查 tailscale 登入狀態 ───────────────────
+    local ts_status
+    ts_status="$(echo '05050505' | sudo -S tailscale status 2>&1 || true)"
+    if echo "$ts_status" | grep -q 'Logged out'; then
+        log "FATAL: Tailscale is Logged out! 無法重建 Funnel。請先在 NAS 執行 sudo tailscale up 重新登入。"
+        return 1
+    fi
+    log "INFO: Tailscale 狀態正常，準備重建 Funnel"
+
     log "RESET: tailscale serve reset"
     echo '05050505' | sudo -S tailscale serve reset 2>&1 | sed 's/^/  /' | tee -a "$LOG_FILE" || true
     log "RESET: tailscale funnel reset"
     echo '05050505' | sudo -S tailscale funnel reset 2>&1 | sed 's/^/  /' | tee -a "$LOG_FILE" || true
 
     local failed=0
-    while IFS='|' read -r port target url; do
-        log "ADD   :$port  ->  $target"
-        if echo '05050505' | sudo -S tailscale funnel --bg --https="$port" "$target" 2>&1 \
+    while IFS='|' read -r port mode target url; do
+        if [ "$mode" = "serve" ]; then
+            CMD="tailscale serve --bg --https=${port} ${target}"
+        else
+            CMD="tailscale funnel --bg --https=${port} ${target}"
+        fi
+        log "ADD ($mode) :$port  ->  $target"
+        if echo '05050505' | sudo -S bash -c "$CMD" 2>&1 \
             | sed 's/^/    /' | tee -a "$LOG_FILE"; then
             log "ADD OK  :$port"
         else
