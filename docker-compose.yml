@@ -127,6 +127,11 @@ services:
 volumes:
   ktv-data:
     name: ktv-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/storage/docker-data/volumes/ktv-data/_data
 
 # =========================================================
 # Networks
