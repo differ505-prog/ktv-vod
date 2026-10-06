@@ -1,5 +1,5 @@
 /** CouchMic TV PWA service worker. Keep media/API/socket requests network-only. */
-const CACHE = 'couchmic-v10';
+const CACHE = 'couchmic-v11';
 const APP_SHELL = [
   '/tv.html', '/tv.js',
   '/mobile.html', '/mobile.js',

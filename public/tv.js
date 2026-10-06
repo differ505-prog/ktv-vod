@@ -629,7 +629,7 @@ function initAudioGraph() {
     transitionOverlay.style.opacity = '1';
     // 預載下一首影片（取 playlist 第一首，src 相同則復用已緩衝內容）
     if (nextSong && nextSong.src) {
-      preloadedNextSrc = nextSong.src.startsWith('/videos/')
+      preloadedNextSrc = nextSong.src.includes('/videos/')
         ? nextSong.src.replace('/videos/', '/tv-videos/') + `?offset=${currentTvSyncOffset}`
         : nextSong.src;
       const preloadImg = new Image();
@@ -728,7 +728,7 @@ function initAudioGraph() {
     // 所以：audioUnlocked=true 之前,把 src 暫存,顯示 overlay,等 user 點。
     // 將 /videos/ 抽換為 /tv-videos/ 以便觸發 JIT 陰影快取機制
     let tvSrc = song.src;
-    if (tvSrc && tvSrc.startsWith('/videos/')) {
+    if (tvSrc && tvSrc.includes('/videos/')) {
       // 2026-08-01: Funnel 環境改用 no-range route,避免 Funnel proxy 對 Range request 的處理
       // 造成 <video> element 內建 audio decoder buffer underrun → 機械音
       const isFunnel = typeof location !== 'undefined'
