@@ -838,6 +838,48 @@ app.post('/api/songs/remove-from-queue', (req, res) => {
   return res.json({ success: true, removed: { id: removed?.id, title: removed?.title } });
 });
 
+app.post('/api/songs/add-to-queue', (req, res) => {
+  const { songId } = req.body || {};
+  const song = SONG_LIBRARY.find((s) => s.id === songId);
+  if (!song) return res.status(404).json({ success: false, error: '找不到歌曲' });
+  if (playlist.some((s) => s.id === song.id)) {
+    return res.status(400).json({ success: false, error: '已在待播清單中' });
+  }
+  const queuedSong = {
+    ...song,
+    addedBy: 'Web',
+    addedAt: Date.now(),
+  };
+  playlist.push(queuedSong);
+  io.emit('song_added', {
+    title: queuedSong.title,
+    artist: queuedSong.artist,
+    addedBy: queuedSong.addedBy,
+  });
+  if (!currentSong) {
+    advanceToNextSong();
+  } else {
+    io.emit('playlist_updated', {
+      playlist: [...playlist],
+      currentSong,
+    });
+  }
+  return res.json({ success: true, queuedSong });
+});
+
+app.post('/api/songs/play-now', (req, res) => {
+  const { songId } = req.body || {};
+  const song = SONG_LIBRARY.find((s) => s.id === songId);
+  if (!song) return res.status(404).json({ success: false, error: '找不到歌曲' });
+  playlist.unshift({
+    ...song,
+    addedBy: 'Web',
+    addedAt: Date.now(),
+  });
+  advanceToNextSong();
+  return res.json({ success: true, currentSong });
+});
+
 /**
  * 第 2 + 3 層: 主揪模式 + 軟刪除 — 移到 _Trash 資料夾,不 fs.unlink。
  *
