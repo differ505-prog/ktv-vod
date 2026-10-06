@@ -43,6 +43,7 @@ services:
       - ktv-data:/ktv-data
       # 即時熱更新：rsync 部署到 ./public/ 後容器直接讀到，無需 docker cp
       - ./public:/app/public:ro
+      - ./server.js:/app/server.js:ro
     # Log rotation: docker 預設 json-file driver 不會 rotate,塞滿會拒絕寫入
     # 2026-08-09: docker log driver 預設值沒有 max-size,log 會無限增長
     # 10MB × 3 檔 ≈ 30MB 循環,夠事後追問題用,又不會塞硬碟

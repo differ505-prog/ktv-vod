@@ -9,7 +9,7 @@
   <title>🎤 CouchMic - 手機遙控</title>
 
   <!-- Local CSS (built from Tailwind v4, no CDN) -->
-  <link rel="stylesheet" href="./styles.css?v=20260812" />
+  <link rel="stylesheet" href="./styles.css?v=20260816" />
   <!-- Socket.io Client (v4) -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <!-- FontAwesome -->
@@ -149,7 +149,8 @@
     .song-cover-wrap {
       transition: box-shadow 0.2s ease;
       flex-shrink: 0;
-      aspect-ratio: 1/1;
+      width: 60px;
+      height: 60px;
       overflow: hidden;
     }
     .artist-tag {
@@ -192,9 +193,9 @@
       border-radius: 6px;
     }
     .skeleton-cover {
-      width: 52px;
-      height: 52px;
-      border-radius: 10px;
+      width: 60px;
+      height: 60px;
+      border-radius: 16px;
       flex-shrink: 0;
     }
     .skeleton-line {

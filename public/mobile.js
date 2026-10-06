@@ -181,9 +181,10 @@
   const _socketStart = Date.now();
   let _disconnectRedTimer = null;
   let _wasConnected = false;
-  console.log('[Socket] 初始化中, URL 會自動從 window.location 推斷, path=/ktv/socket.io');
+  const socketPath = window.location.pathname.startsWith('/ktv') ? '/ktv/socket.io' : '/socket.io';
+  console.log(`[Socket] 初始化中, URL 會自動從 window.location 推斷, path=${socketPath}`);
   const socket = io({
-    path: '/ktv/socket.io',
+    path: socketPath,
     transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
@@ -773,10 +774,15 @@ function renderNowPlaying() {
 
     li.innerHTML = `
       ${indexHtml}
-      <div class="song-cover-wrap w-[60px] rounded-2xl bg-[#282828] flex items-center justify-center flex-shrink-0">
-        ${coverHtml}
+      <div class="song-cover-wrap rounded-2xl bg-[#282828] flex items-center justify-center flex-shrink-0 overflow-hidden shadow-sm border border-white/10 relative" style="width: 60px; height: 60px;">
+        ${song.cover
+          ? `<img src="${escapeHtml(song.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />`
+          : ''}
+        <div class="song-cover-fallback text-gray-500 text-lg ${song.cover ? 'hidden' : 'flex'} items-center justify-center w-full h-full">
+          <i class="fa-solid fa-music"></i>
+        </div>
       </div>
-      <div class="flex-1 min-w-0 overflow-hidden flex items-center">
+      <div class="flex-1 min-w-0 flex items-center">
         <div class="flex-1 min-w-0 overflow-hidden">
           <div class="text-white text-sm font-semibold truncate leading-snug mb-0.5">${escapeHtml(displayTitle)}</div>
           <div class="flex items-center gap-1.5 flex-wrap">

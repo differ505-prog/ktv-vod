@@ -200,6 +200,7 @@ app.use((req, res, next) => {
 });
 
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
   // 對外網 (Tailscale Funnel / 反向代理) 友善：拉長 ping 容忍時間,
@@ -211,6 +212,20 @@ const io = new Server(server, {
     // 允許所有跨域請求 (cors 已經處理 origin)
     callback(null, true);
   },
+});
+
+// 必須在 new Server(server) 之後註冊 prependListener:
+// 因為 Engine.io 在初始化時會把 server 現有的 'request'/'upgrade' listeners 移至 fallback。
+// 在其後 prependListener 才能確保在 Engine.io 檢查路徑之前將 /ktv/ 前綴標準化為 /。
+server.prependListener('request', (req) => {
+  if (req.url && req.url.startsWith('/ktv/')) {
+    req.url = req.url.slice(4);
+  }
+});
+server.prependListener('upgrade', (req, socket, head) => {
+  if (req.url && req.url.startsWith('/ktv/')) {
+    req.url = req.url.slice(4);
+  }
 });
 
 // ===== 靜態託管 =====

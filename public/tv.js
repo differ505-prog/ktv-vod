@@ -516,9 +516,11 @@ function initAudioGraph() {
   // 2026-08-10: Cloudflare Quick Tunnel 透過 nginx 8089 proxy 仍帶 /ktv/, 跟 Funnel 一致
   // [DEBUG] 添加詳細連線日誌，協助診斷 net::ERR_FAILED 問題
   const _tvSocketStart = Date.now();
-  console.log('[Socket] 初始化中, URL 自動推斷, path=/ktv/socket.io');
+  const socketPath = window.location.pathname.startsWith('/ktv') ? '/ktv/socket.io' : '/socket.io';
+  console.log(`[Socket] 初始化中, URL 自動推斷, path=${socketPath}`);
   const socket = io({
-    path: '/ktv/socket.io',
+    path: socketPath,
+    transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,

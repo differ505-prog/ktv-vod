@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build:css": "node -e \"const postcss=require('postcss');const fs=require('fs');const p=require('@tailwindcss/postcss');const css=fs.readFileSync('./public/styles.css','utf8');postcss([p]).process(css,{from:'./public/styles.css'}).then(r=>{fs.writeFileSync('./public/styles.css',r.css);console.log('CSS built:',r.css.length,'bytes')}).catch(e=>{console.error(e);process.exit(1)})\"",
+    "build:css": "./node_modules/.bin/tailwindcss --full -i ./public/styles.css -o ./public/styles.css",
     "deploy:css": "npm run build:css && SSHPASS='05050505' rsync -avz -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' --checksum --exclude='.DS_Store' public/ vibe@vibe-nas.taila67710.ts.net:/home/vibe/ktv-vod/public/"
   },
   "keywords": [
@@ -24,9 +24,8 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.3",
     "autoprefixer": "^10.5.4",
     "postcss": "^8.5.26",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^3.4.19"
   }
 }
