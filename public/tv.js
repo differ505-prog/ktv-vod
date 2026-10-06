@@ -58,6 +58,7 @@
   const audioB = new Audio();
   [audioA, audioB].forEach((a, i) => {
     a.id = 'bgAudio' + (i === 0 ? 'A' : 'B');
+    a.crossOrigin = 'anonymous';
     a.preload = 'auto';
     a.loop = false;
     // audioSessionType='playback' 是 iOS 13+ WebKit 私有 API,
