@@ -252,9 +252,10 @@ document.addEventListener('visibilitychange', () => {
   let lastImmersiveBroadcastImmersive = null;
 
   // ===== 產生 QR Code =====
-  // 內容：http://[伺服器IP]:[Port]/mobile.html
+  // 內容：動態適配路徑前綴 (例如 /ktv/mobile.html 或 /mobile.html)
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
-  const mobileUrl = `${serverUrl}/mobile.html`;
+  const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+  const mobileUrl = `${serverUrl}${basePath}/mobile.html`;
   qrUrlDiv.textContent = mobileUrl;
 
   // 共用:把 QR Code 渲染到指定容器 (沉浸模式 modal 跟主 panel 共用同一份 URL)
@@ -895,6 +896,7 @@ function initAudioGraph() {
     // 立即通知後端切歌（不再等緩衝恢復）
     if (!_songEndedEmitted) {
       _emitSongEnded();
+    }
   });
 
   let _videoFallbackTried = false;
