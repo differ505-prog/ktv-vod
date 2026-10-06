@@ -3,7 +3,7 @@
 # 安裝方式：pip install -r requirements.txt
 
 # YouTube / 影片下載
-yt-dlp>=2024.0.0
+yt-dlp>=2026.8.19
 
 # AI 音源分離 (Meta Demucs)
 # 若無 GPU，會自動降級使用 CPU

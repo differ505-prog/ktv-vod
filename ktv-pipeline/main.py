@@ -27,7 +27,13 @@ from typing import Optional
 
 import yt_dlp
 
-from metadata import SongMetadata, write_metadata_file, parse_yt_title
+try:
+    from .metadata import SongMetadata, write_metadata_file, parse_yt_title
+except (ImportError, ValueError):
+    try:
+        from ktv_pipeline.metadata import SongMetadata, write_metadata_file, parse_yt_title
+    except (ImportError, ValueError):
+        from metadata import SongMetadata, write_metadata_file, parse_yt_title
 
 # Demucs 音源分離
 try:
@@ -237,9 +243,27 @@ def stage_download(
             "quiet": True,
             "no_warnings": True,
             "merge_output_format": "mp4",
+            "retries": 10,
+            "fragment_retries": 10,
+            "socket_timeout": 30,
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except Exception as e:
+            err_msg = str(e)
+            if "403" in err_msg or "Forbidden" in err_msg:
+                logger.warning(f"[下載] 偵測到 403 Forbidden，嘗試切換 client 重試：{err_msg}")
+                fallback_opts = dict(ydl_opts)
+                fallback_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android", "web"],
+                    }
+                }
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl_retry:
+                    ydl_retry.download([url])
+            else:
+                raise
     except Exception as e:
         raise RuntimeError(f"[ERROR] 影片下載失敗：{e}") from e
 
