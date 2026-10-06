@@ -232,8 +232,10 @@ def stage_download(
     logger.info("[下載] 階段 1/3：下載影音合一 MP4（確保 A/V 同步）...")
     try:
         ydl_opts = {
-            # bestvideo+bestaudio: yt-dlp 會自動 mux 並對齊 PTS
+            # 優先下載原生 H.264 (avc) 視訊，免去 NAS 重新編碼負擔；若無再下載其他格式並自動轉碼
             "format": (
+                "bestvideo[vcodec^=avc][height<=1080]+bestaudio[ext=m4a]/"
+                "bestvideo[vcodec^=avc]+bestaudio/"
                 "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/"
                 "bestvideo[ext=mp4]+bestaudio/"
                 "best[ext=mp4]/"
@@ -306,7 +308,7 @@ def stage_download(
             "-i", str(full_path),
             "-map", "0:v:0",
             "-c:v", "libx264",
-            "-preset", "fast",     # 平衡速度/品質, KTV 場景不需要 highest
+            "-preset", "veryfast", # 使用 veryfast 避免 NAS CPU 轉碼超時
             "-crf", "23",
             "-pix_fmt", "yuv420p",  # iOS 嚴格要求
             "-movflags", "+faststart",
@@ -324,7 +326,7 @@ def stage_download(
             "-movflags", "+faststart",
             str(video_path),
         ]
-    result = subprocess.run(cmd_video, capture_output=True, text=True, timeout=600)  # transcoding 給多一點時間
+    result = subprocess.run(cmd_video, capture_output=True, text=True, timeout=1800)  # transcoding 容許 30 分鐘，避免逾時
     if result.returncode != 0:
         raise RuntimeError(
             f"[ERROR] 抽出視訊失敗 rc={result.returncode}\n{(result.stderr or '')[-500:]}"
